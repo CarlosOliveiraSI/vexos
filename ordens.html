@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ordens de serviço — VexOS</title>
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">Vex<b>OS</b></div>
+    <nav class="topo-nav">
+      <a href="ordens.html" class="ativo">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta">
+      <span id="quem"></span>
+      <button onclick="sair()">sair</button>
+    </div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Ordens de serviço</h1>
+      <div class="sub" id="resumo"></div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div class="busca">
+        <input id="busca" placeholder="Buscar por placa, cliente ou nº...">
+      </div>
+      <button class="btn" onclick="abrirNova()">+ Nova ordem</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div class="filtros" id="filtros">
+    <button class="btn-mini" data-status="">Todas</button>
+    <button class="btn-mini" data-status="aberta">Abertas</button>
+    <button class="btn-mini" data-status="andamento">Em andamento</button>
+    <button class="btn-mini" data-status="concluida">Concluídas</button>
+  </div>
+
+  <div class="cartao" style="padding:8px 12px;">
+    <div id="lista"><div class="carregando">Carregando...</div></div>
+  </div>
+</div>
+
+<!-- mostrado quando a oficina não contratou o módulo -->
+<div class="pagina" id="sem-modulo" style="display:none">
+  <div class="bloqueio">
+    <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/>
+      <path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5"/>
+    </svg>
+    <h2>VexOS não está ativo</h2>
+    <p>
+      O controle de ordens de serviço é um adicional da sua assinatura
+      Vextron. Com ele você registra o que foi feito em cada veículo e
+      consulta o histórico por placa — inclusive as análises de ECU
+      feitas no aplicativo.
+    </p>
+    <a class="btn" href="https://wa.me/553584111984?text=Ol%C3%A1%2C%20quero%20ativar%20o%20VexOS%20na%20minha%20assinatura"
+       target="_blank" rel="noopener">Ativar o VexOS</a>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let ordens = [];
+  let filtroStatus = "";
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+
+    document.getElementById("quem").textContent = contexto.oficina || contexto.email;
+
+    if (!contexto.temVexOS) {
+      document.getElementById("sem-modulo").style.display = "block";
+      return;
+    }
+    document.getElementById("pagina").style.display = "block";
+    carregar();
+  })();
+
+  async function carregar() {
+    const alvo = document.getElementById("lista");
+    alvo.innerHTML = '<div class="carregando">Carregando...</div>';
+    try {
+      /* Traz veículo e cliente na mesma consulta. Buscar um por um
+         faria dezenas de chamadas para montar uma lista de 30 linhas. */
+      ordens = await Banco.listar("ordens_servico",
+        "select=id,numero,status,descricao,aberta_em,concluida_em," +
+        "veiculos(placa,marca,modelo),clientes(nome)" +
+        "&order=numero.desc&limit=200");
+      desenhar();
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+      alvo.innerHTML = "";
+    }
+  }
+
+  function desenhar() {
+    const termo = document.getElementById("busca").value.trim().toLowerCase();
+    const alvo = document.getElementById("lista");
+
+    let lista = ordens;
+    if (filtroStatus) lista = lista.filter(o => o.status === filtroStatus);
+    if (termo) {
+      lista = lista.filter(o => {
+        const v = o.veiculos || {}, c = o.clientes || {};
+        return [String(o.numero), v.placa, v.marca, v.modelo, c.nome, o.descricao]
+          .filter(Boolean).join(" ").toLowerCase().includes(termo);
+      });
+    }
+
+    document.getElementById("resumo").textContent =
+      `${lista.length} de ${ordens.length} ordem(ns)`;
+
+    if (!lista.length) {
+      alvo.innerHTML = ordens.length
+        ? '<div class="vazio">Nada encontrado com esse filtro.</div>'
+        : '<div class="vazio">Nenhuma ordem ainda.<br>' +
+          'Clique em <b>Nova ordem</b> para começar.</div>';
+      return;
+    }
+
+    let html = '<table class="tabela"><thead><tr>' +
+      '<th style="width:70px">Nº</th><th>Veículo</th>' +
+      '<th class="esconde-cel">Cliente</th>' +
+      '<th class="esconde-cel">Serviço</th>' +
+      '<th style="width:120px">Situação</th>' +
+      '<th style="width:110px" class="esconde-cel">Aberta</th>' +
+      '</tr></thead><tbody>';
+
+    for (const o of lista) {
+      const v = o.veiculos || {}, c = o.clientes || {};
+      const s = STATUS_OS[o.status] || STATUS_OS.aberta;
+      const veic = v.placa
+        ? `<span class="placa">${esc(formatarPlaca(v.placa))}</span>` +
+          (v.modelo ? `<br><span style="color:var(--texto-sec);font-size:12.5px">${esc(v.marca||"")} ${esc(v.modelo)}</span>` : "")
+        : '<span style="color:var(--texto-sec)">—</span>';
+
+      html += `<tr onclick="location.href='ordem.html?id=${o.id}'">
+        <td class="num">${o.numero}</td>
+        <td>${veic}</td>
+        <td class="esconde-cel">${esc(c.nome || "—")}</td>
+        <td class="esconde-cel" style="color:var(--texto-sec)">${esc((o.descricao||"").slice(0,60))}</td>
+        <td><span class="selo ${s.cor}">${s.texto}</span></td>
+        <td class="esconde-cel" style="color:var(--texto-sec);font-size:12.5px">${esc(soData(o.aberta_em))}</td>
+      </tr>`;
+    }
+    alvo.innerHTML = html + "</tbody></table>";
+  }
+
+  document.getElementById("busca").addEventListener("input", desenhar);
+
+  document.getElementById("filtros").addEventListener("click", e => {
+    const b = e.target.closest("[data-status]");
+    if (!b) return;
+    filtroStatus = b.dataset.status;
+    document.querySelectorAll("#filtros .btn-mini").forEach(x => {
+      x.style.borderColor = ""; x.style.color = "";
+    });
+    b.style.borderColor = "var(--laranja)";
+    b.style.color = "var(--laranja)";
+    desenhar();
+  });
+
+  function abrirNova() { location.href = "ordem.html?nova=1"; }
+</script>
+</body>
+</html>

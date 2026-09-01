@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ordem de serviço — VexOS</title>
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">Vex<b>OS</b></div>
+    <nav class="topo-nav">
+      <a href="ordens.html" class="ativo">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta">
+      <span id="quem"></span>
+      <button onclick="sair()">sair</button>
+    </div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1 id="titulo">Nova ordem</h1>
+      <div class="sub" id="subtitulo"></div>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <a class="btn-linha btn" href="ordens.html">Voltar</a>
+      <button class="btn" id="btn-salvar" onclick="salvar()">Salvar</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <!-- ---- veículo e cliente ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Veículo e cliente</div>
+
+    <div class="linha-campos c2">
+      <div class="campo">
+        <label for="placa">Placa</label>
+        <input id="placa" placeholder="ABC1D23" maxlength="8"
+               autocomplete="off">
+        <div class="sub" id="dica-placa" style="margin-top:5px"></div>
+      </div>
+      <div class="campo">
+        <label for="km">Quilometragem na entrada</label>
+        <input id="km" type="number" placeholder="148000">
+      </div>
+    </div>
+
+    <div class="linha-campos c4">
+      <div class="campo">
+        <label for="marca">Marca</label>
+        <input id="marca" placeholder="Volkswagen">
+      </div>
+      <div class="campo">
+        <label for="modelo">Modelo</label>
+        <input id="modelo" placeholder="Amarok">
+      </div>
+      <div class="campo">
+        <label for="ano">Ano</label>
+        <input id="ano" placeholder="2014">
+      </div>
+      <div class="campo">
+        <label for="motor">Motor</label>
+        <input id="motor" placeholder="2.0 TDI 140cv">
+      </div>
+    </div>
+
+    <div class="linha-campos c2">
+      <div class="campo">
+        <label for="cliente">Cliente</label>
+        <input id="cliente" placeholder="Nome do cliente" autocomplete="off">
+        <div class="sub" id="dica-cliente" style="margin-top:5px"></div>
+      </div>
+      <div class="campo">
+        <label for="telefone">Telefone</label>
+        <input id="telefone" placeholder="(35) 99999-0000">
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- serviço ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Serviço</div>
+
+    <div class="linha-campos c2">
+      <div class="campo">
+        <label for="status">Situação</label>
+        <select id="status">
+          <option value="aberta">Aberta</option>
+          <option value="andamento">Em andamento</option>
+          <option value="concluida">Concluída</option>
+          <option value="cancelada">Cancelada</option>
+        </select>
+      </div>
+      <div class="campo"></div>
+    </div>
+
+    <div class="campo">
+      <label for="descricao">O que o cliente relatou</label>
+      <textarea id="descricao" placeholder="Reclamação, pedido, o que motivou a entrada do veículo."></textarea>
+    </div>
+    <div class="campo">
+      <label for="diagnostico">O que foi encontrado / executado</label>
+      <textarea id="diagnostico" placeholder="Diagnóstico e serviço realizado."></textarea>
+    </div>
+    <div class="campo" style="margin-bottom:0">
+      <label for="observacoes">Observações</label>
+      <textarea id="observacoes" style="min-height:60px"></textarea>
+    </div>
+  </div>
+
+  <!-- ---- itens ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Serviços e peças</div>
+    <div id="itens"></div>
+    <button class="btn-mini" onclick="novoItem()" style="margin-top:12px">
+      + Adicionar linha
+    </button>
+    <div id="total" style="text-align:right; margin-top:14px; font-size:15px;
+         font-weight:700; display:none;">
+    </div>
+  </div>
+
+  <!-- ---- análises vindas do Vextron ---- -->
+  <div class="cartao" id="cartao-analises" style="display:none">
+    <div class="cartao-titulo">Análises de ECU</div>
+    <div id="analises"></div>
+  </div>
+
+  <!-- ---- histórico da placa ---- -->
+  <div class="cartao" id="cartao-historico" style="display:none">
+    <div class="cartao-titulo">Histórico deste veículo</div>
+    <div id="historico"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let osId = null;          // nulo enquanto não salva
+  let veiculoAtual = null;
+  let clienteAtual = null;
+  let itens = [];           // {id?, descricao, quantidade, valor_unit, novo?}
+  let itensApagados = [];
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    document.getElementById("quem").textContent = contexto.oficina || contexto.email;
+
+    if (!contexto.temVexOS) {
+      location.href = "ordens.html";   // lá mostra o convite
+      return;
+    }
+    document.getElementById("pagina").style.display = "block";
+
+    const params = new URLSearchParams(location.search);
+    osId = params.get("id");
+    if (osId) {
+      await carregarOS(osId);
+    } else {
+      desenharItens();
+      document.getElementById("placa").focus();
+    }
+  })();
+
+  /* ---------------------------------------------------------------
+     Carregar uma ordem existente
+     --------------------------------------------------------------- */
+  async function carregarOS(id) {
+    try {
+      const r = await Banco.listar("ordens_servico",
+        `id=eq.${id}&select=*,veiculos(*),clientes(*)`);
+      const o = r && r[0];
+      if (!o) { aviso(document.getElementById("msg"), "Ordem não encontrada.", "erro"); return; }
+
+      document.getElementById("titulo").textContent = "Ordem " + o.numero;
+      document.getElementById("subtitulo").textContent =
+        "Aberta em " + dataBR(o.aberta_em);
+
+      veiculoAtual = Array.isArray(o.veiculos) ? o.veiculos[0] : o.veiculos;
+      clienteAtual = Array.isArray(o.clientes) ? o.clientes[0] : o.clientes;
+
+      if (veiculoAtual) {
+        document.getElementById("placa").value = formatarPlaca(veiculoAtual.placa);
+        document.getElementById("marca").value = veiculoAtual.marca || "";
+        document.getElementById("modelo").value = veiculoAtual.modelo || "";
+        document.getElementById("ano").value = veiculoAtual.ano || "";
+        document.getElementById("motor").value = veiculoAtual.motor || "";
+      }
+      if (clienteAtual) {
+        document.getElementById("cliente").value = clienteAtual.nome || "";
+        document.getElementById("telefone").value = clienteAtual.telefone || "";
+      }
+      document.getElementById("km").value = o.km_entrada || "";
+      document.getElementById("status").value = o.status;
+      document.getElementById("descricao").value = o.descricao || "";
+      document.getElementById("diagnostico").value = o.diagnostico || "";
+      document.getElementById("observacoes").value = o.observacoes || "";
+
+      itens = await Banco.listar("os_itens", `os_id=eq.${id}&order=ordem`) || [];
+      desenharItens();
+      carregarAnalises(id);
+      if (veiculoAtual) carregarHistorico(veiculoAtual.id, id);
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+    }
+  }
+
+  /* ---------------------------------------------------------------
+     Placa: busca o veículo já cadastrado e preenche o resto
+
+     Com a placa como chave, digitar uma que já existe traz marca,
+     modelo e o dono atual — e evita cadastrar o mesmo carro duas
+     vezes, o que partiria o histórico em dois registros.
+     --------------------------------------------------------------- */
+  let buscaPlaca = null;
+  document.getElementById("placa").addEventListener("input", function () {
+    const bruta = normalizarPlaca(this.value);
+    this.value = formatarPlaca(bruta);
+    clearTimeout(buscaPlaca);
+    if (bruta.length < 7) {
+      document.getElementById("dica-placa").textContent = "";
+      return;
+    }
+    buscaPlaca = setTimeout(() => procurarPlaca(bruta), 350);
+  });
+
+  async function procurarPlaca(placa) {
+    const dica = document.getElementById("dica-placa");
+    try {
+      const r = await Banco.listar("veiculos",
+        `placa=eq.${placa}&select=*,clientes(id,nome,telefone)`);
+      const v = r && r[0];
+      if (!v) {
+        dica.innerHTML = '<span style="color:var(--texto-sec)">Veículo novo — será cadastrado ao salvar.</span>';
+        return;
+      }
+      veiculoAtual = v;
+      document.getElementById("marca").value = v.marca || "";
+      document.getElementById("modelo").value = v.modelo || "";
+      document.getElementById("ano").value = v.ano || "";
+      document.getElementById("motor").value = v.motor || "";
+
+      const c = Array.isArray(v.clientes) ? v.clientes[0] : v.clientes;
+      if (c) {
+        clienteAtual = c;
+        document.getElementById("cliente").value = c.nome || "";
+        document.getElementById("telefone").value = c.telefone || "";
+      }
+      dica.innerHTML = '<span style="color:var(--sucesso)">Veículo já cadastrado.</span>';
+      if (!osId) carregarHistorico(v.id, null);
+    } catch (e) {
+      dica.textContent = "";
+    }
+  }
+
+  /* ---------------------------------------------------------------
+     Itens
+     --------------------------------------------------------------- */
+  function novoItem() {
+    itens.push({ descricao: "", quantidade: 1, valor_unit: null, novo: true });
+    desenharItens();
+    const campos = document.querySelectorAll("#itens .item-desc");
+    if (campos.length) campos[campos.length - 1].focus();
+  }
+
+  function desenharItens() {
+    const alvo = document.getElementById("itens");
+    if (!itens.length) {
+      alvo.innerHTML = '<div class="vazio" style="padding:20px">Nenhuma linha. O valor é opcional — use só se cobrar pela ordem.</div>';
+      atualizarTotal();
+      return;
+    }
+    let html = '<table class="tabela"><thead><tr>' +
+      '<th>Descrição</th><th style="width:80px">Qtd</th>' +
+      '<th style="width:130px">Valor unit.</th>' +
+      '<th style="width:110px">Total</th><th style="width:44px"></th>' +
+      '</tr></thead><tbody>';
+    itens.forEach((it, i) => {
+      const tot = (it.valor_unit === null || it.valor_unit === "" )
+        ? "" : dinheiro(Number(it.quantidade || 0) * Number(it.valor_unit || 0));
+      html += `<tr style="cursor:default">
+        <td><input class="item-desc" data-i="${i}" value="${esc(it.descricao)}"
+             placeholder="Serviço ou peça"
+             style="width:100%;background:var(--fundo);color:var(--texto);border:1px solid var(--borda);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:13.5px"></td>
+        <td><input class="item-qtd" data-i="${i}" type="number" step="0.01" value="${esc(it.quantidade)}"
+             style="width:100%;background:var(--fundo);color:var(--texto);border:1px solid var(--borda);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:13.5px"></td>
+        <td><input class="item-val" data-i="${i}" type="number" step="0.01"
+             value="${it.valor_unit === null || it.valor_unit === undefined ? "" : esc(it.valor_unit)}"
+             placeholder="—"
+             style="width:100%;background:var(--fundo);color:var(--texto);border:1px solid var(--borda);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:13.5px"></td>
+        <td style="color:var(--texto-sec)">${esc(tot)}</td>
+        <td><button class="btn-mini btn-perigo" data-remover="${i}">×</button></td>
+      </tr>`;
+    });
+    alvo.innerHTML = html + "</tbody></table>";
+
+    alvo.querySelectorAll(".item-desc").forEach(el =>
+      el.addEventListener("input", e => { itens[e.target.dataset.i].descricao = e.target.value; }));
+    alvo.querySelectorAll(".item-qtd").forEach(el =>
+      el.addEventListener("input", e => { itens[e.target.dataset.i].quantidade = e.target.value; atualizarTotal(); }));
+    alvo.querySelectorAll(".item-val").forEach(el =>
+      el.addEventListener("input", e => {
+        const v = e.target.value;
+        itens[e.target.dataset.i].valor_unit = v === "" ? null : v;
+        atualizarTotal();
+      }));
+    alvo.querySelectorAll("[data-remover]").forEach(el =>
+      el.addEventListener("click", e => {
+        const i = Number(e.target.dataset.remover);
+        if (itens[i].id) itensApagados.push(itens[i].id);
+        itens.splice(i, 1);
+        desenharItens();
+      }));
+    atualizarTotal();
+  }
+
+  function atualizarTotal() {
+    const el = document.getElementById("total");
+    const soma = itens.reduce((s, it) =>
+      s + (it.valor_unit ? Number(it.quantidade || 0) * Number(it.valor_unit) : 0), 0);
+    /* Só mostra o total se alguém pôs valor: quem usa a ordem só para
+       registrar o serviço não quer ver "R$ 0,00" no rodapé. */
+    if (soma > 0) {
+      el.style.display = "block";
+      el.innerHTML = 'Total: <span style="color:var(--laranja)">' + dinheiro(soma) + "</span>";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
+  /* ---------------------------------------------------------------
+     Salvar
+
+     Cria ou atualiza cliente, veículo e ordem em sequência. O veículo
+     depende do cliente, e a ordem depende dos dois.
+     --------------------------------------------------------------- */
+  async function salvar() {
+    const btn = document.getElementById("btn-salvar");
+    const msg = document.getElementById("msg");
+    const placa = normalizarPlaca(document.getElementById("placa").value);
+    const nomeCliente = document.getElementById("cliente").value.trim();
+
+    if (!placa || placa.length < 7) {
+      aviso(msg, "Informe a placa do veículo.", "erro");
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Salvando...";
+    aviso(msg, "");
+
+    try {
+      /* cliente */
+      let clienteId = clienteAtual ? clienteAtual.id : null;
+      const telefone = document.getElementById("telefone").value.trim();
+      if (nomeCliente) {
+        if (clienteId) {
+          await Banco.atualizar("clientes", clienteId,
+            { nome: nomeCliente, telefone: telefone || null });
+        } else {
+          const c = await Banco.criar("clientes", {
+            oficina_id: contexto.oficina_id,
+            nome: nomeCliente, telefone: telefone || null,
+          });
+          clienteId = c.id;
+          clienteAtual = c;
+        }
+      }
+
+      /* veículo */
+      const dadosVeiculo = {
+        oficina_id: contexto.oficina_id,
+        cliente_id: clienteId,
+        placa: placa,
+        marca: document.getElementById("marca").value.trim() || null,
+        modelo: document.getElementById("modelo").value.trim() || null,
+        ano: document.getElementById("ano").value.trim() || null,
+        motor: document.getElementById("motor").value.trim() || null,
+        km: Number(document.getElementById("km").value) || null,
+      };
+      let veiculoId = veiculoAtual ? veiculoAtual.id : null;
+      if (veiculoId) {
+        await Banco.atualizar("veiculos", veiculoId, dadosVeiculo);
+      } else {
+        const v = await Banco.criar("veiculos", dadosVeiculo);
+        veiculoId = v.id;
+        veiculoAtual = v;
+      }
+
+      /* ordem */
+      const status = document.getElementById("status").value;
+      const dadosOS = {
+        oficina_id: contexto.oficina_id,
+        veiculo_id: veiculoId,
+        cliente_id: clienteId,
+        status: status,
+        km_entrada: Number(document.getElementById("km").value) || null,
+        descricao: document.getElementById("descricao").value.trim() || null,
+        diagnostico: document.getElementById("diagnostico").value.trim() || null,
+        observacoes: document.getElementById("observacoes").value.trim() || null,
+        /* A data de conclusão acompanha a situação sozinha: exigir que
+           alguém preencha à mão garante que fique errada. */
+        concluida_em: status === "concluida" ? new Date().toISOString() : null,
+      };
+
+      if (osId) {
+        await Banco.atualizar("ordens_servico", osId, dadosOS);
+      } else {
+        const o = await Banco.criar("ordens_servico", dadosOS);
+        osId = o.id;
+        document.getElementById("titulo").textContent = "Ordem " + o.numero;
+        history.replaceState(null, "", "ordem.html?id=" + o.id);
+      }
+
+      /* itens */
+      for (const id of itensApagados) {
+        await Banco.apagar("os_itens", id);
+      }
+      itensApagados = [];
+      for (let i = 0; i < itens.length; i++) {
+        const it = itens[i];
+        if (!String(it.descricao || "").trim()) continue;
+        const dados = {
+          os_id: osId,
+          descricao: it.descricao.trim(),
+          quantidade: Number(it.quantidade) || 1,
+          valor_unit: it.valor_unit === null || it.valor_unit === ""
+                      ? null : Number(it.valor_unit),
+          ordem: i,
+        };
+        if (it.id) await Banco.atualizar("os_itens", it.id, dados);
+        else {
+          const novo = await Banco.criar("os_itens", dados);
+          it.id = novo.id;
+          delete it.novo;
+        }
+      }
+
+      aviso(msg, "Salvo.", "ok");
+      setTimeout(() => aviso(msg, ""), 2500);
+      carregarHistorico(veiculoId, osId);
+    } catch (e) {
+      aviso(msg, e.message || "Não foi possível salvar.", "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salvar";
+    }
+  }
+
+  /* ---------------------------------------------------------------
+     Análises vindas do Vextron desktop
+     --------------------------------------------------------------- */
+  async function carregarAnalises(id) {
+    try {
+      const lista = await Banco.listar("os_analises",
+        `os_id=eq.${id}&order=registrada_em.desc`);
+      if (!lista || !lista.length) return;
+
+      document.getElementById("cartao-analises").style.display = "block";
+      let html = "";
+      for (const a of lista) {
+        html += `<div style="border:1px solid var(--borda);border-radius:9px;padding:14px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+            <b>${esc(a.ecu || "ECU não identificada")}</b>
+            <span style="color:var(--texto-sec);font-size:12.5px">${esc(dataBR(a.registrada_em))}</span>
+          </div>
+          ${a.arquivo_a ? `<div style="font-size:13px;color:var(--texto-sec)">Original: <span style="font-family:Consolas,monospace;color:var(--texto)">${esc(a.arquivo_a)}</span></div>` : ""}
+          ${a.arquivo_b ? `<div style="font-size:13px;color:var(--texto-sec)">Gravado: <span style="font-family:Consolas,monospace;color:var(--texto)">${esc(a.arquivo_b)}</span></div>` : ""}
+          ${a.bytes_alterados ? `<div style="font-size:13px;color:var(--texto-sec);margin-top:6px">${a.bytes_alterados} bytes alterados em ${a.blocos || 0} bloco(s)${a.isolados ? ` · ${a.isolados} alteração(ões) isolada(s)` : ""}</div>` : ""}
+          ${a.resumo ? `<div style="font-size:13px;margin-top:8px;line-height:1.6">${esc(a.resumo)}</div>` : ""}
+          ${a.sha_b ? `<div style="font-size:11.5px;color:var(--texto-sec);margin-top:8px;font-family:Consolas,monospace">SHA-256: ${esc(a.sha_b.slice(0,32))}...</div>` : ""}
+        </div>`;
+      }
+      document.getElementById("analises").innerHTML = html;
+    } catch (e) { /* sem análises, o cartão fica escondido */ }
+  }
+
+  /* ---------------------------------------------------------------
+     Histórico da placa
+
+     É o que dá valor ao sistema: toda vez que aquele carro voltar, o
+     que já foi feito nele aparece — inclusive de quando o dono era
+     outro.
+     --------------------------------------------------------------- */
+  async function carregarHistorico(veiculoId, excluir) {
+    if (!veiculoId) return;
+    try {
+      const lista = await Banco.listar("historico_veiculo",
+        `veiculo_id=eq.${veiculoId}&order=aberta_em.desc&limit=30`);
+      const outras = (lista || []).filter(h => h.os_id !== excluir);
+      if (!outras.length) return;
+
+      document.getElementById("cartao-historico").style.display = "block";
+      let html = '<table class="tabela"><thead><tr>' +
+        '<th style="width:60px">Nº</th><th style="width:110px">Data</th>' +
+        '<th>Serviço</th><th class="esconde-cel">Cliente</th>' +
+        '<th style="width:110px">Situação</th></tr></thead><tbody>';
+      for (const h of outras) {
+        const s = STATUS_OS[h.status] || STATUS_OS.aberta;
+        html += `<tr onclick="location.href='ordem.html?id=${h.os_id}'">
+          <td class="num">${h.numero}</td>
+          <td style="color:var(--texto-sec)">${esc(soData(h.aberta_em))}</td>
+          <td>${esc((h.descricao||"—").slice(0,70))}${h.analises ? ' <span class="selo aberta" style="font-size:10px">análise</span>' : ""}</td>
+          <td class="esconde-cel" style="color:var(--texto-sec)">${esc(h.cliente_na_epoca||"—")}</td>
+          <td><span class="selo ${s.cor}">${s.texto}</span></td>
+        </tr>`;
+      }
+      document.getElementById("historico").innerHTML = html + "</tbody></table>";
+    } catch (e) { /* view pode não existir ainda */ }
+  }
+</script>
+</body>
+</html>

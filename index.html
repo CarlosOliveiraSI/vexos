@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VexOS — Entrar</title>
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<div class="login-tela">
+  <div class="login-caixa">
+    <div class="login-marca">Vex<b>OS</b></div>
+    <div class="login-sub">Ordens de serviço · Motronix Vextron</div>
+
+    <div class="aviso erro" id="msg"></div>
+
+    <div class="campo">
+      <label for="email">E-mail</label>
+      <input type="email" id="email" autocomplete="username"
+             placeholder="voce@suaoficina.com.br">
+    </div>
+    <div class="campo">
+      <label for="senha">Senha</label>
+      <input type="password" id="senha" autocomplete="current-password">
+    </div>
+
+    <button class="btn" id="btn" style="width:100%; justify-content:center;">
+      Entrar
+    </button>
+
+    <div class="login-rodape">
+      Use a mesma conta do Vextron.<br>
+      Ainda não tem? Fale com o suporte.
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  const msg = document.getElementById("msg");
+  const btn = document.getElementById("btn");
+
+  /* Já entrou antes? Vai direto para as ordens. A sessão dura enquanto
+     o token de renovação valer, então o cliente não digita senha todo
+     dia. */
+  (async function () {
+    const s = Sessao.ler();
+    if (s && s.refresh_token && await Sessao.token()) {
+      location.href = "ordens.html";
+      return;
+    }
+    /* E-mail lembrado do último acesso: sair e ter que redigitar é
+       justamente quando lembrar dele mais serve. */
+    const lembrado = localStorage.getItem("vexos.email");
+    if (lembrado) {
+      document.getElementById("email").value = lembrado;
+      document.getElementById("senha").focus();
+    } else {
+      document.getElementById("email").focus();
+    }
+  })();
+
+  async function fazerLogin() {
+    const email = document.getElementById("email").value.trim();
+    const senha = document.getElementById("senha").value;
+    if (!email || !senha) {
+      aviso(msg, "Informe e-mail e senha.", "erro");
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Entrando...";
+    aviso(msg, "");
+
+    try {
+      await entrar(email, senha);
+      localStorage.setItem("vexos.email", email.trim().toLowerCase());
+      location.href = "ordens.html";
+    } catch (e) {
+      aviso(msg, e.message || "Não foi possível entrar.", "erro");
+      btn.disabled = false;
+      btn.textContent = "Entrar";
+    }
+  }
+
+  btn.addEventListener("click", fazerLogin);
+  for (const id of ["email", "senha"]) {
+    document.getElementById(id).addEventListener("keydown", e => {
+      if (e.key === "Enter") fazerLogin();
+    });
+  }
+</script>
+</body>
+</html>
