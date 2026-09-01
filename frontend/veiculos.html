@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Veículos — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">ORDENS DE SERVIÇO</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html" class="ativo">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta">
+      <span id="quem"></span>
+      <button onclick="sair()">sair</button>
+    </div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Veículos</h1>
+      <div class="sub" id="resumo"></div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div class="busca">
+        <input id="busca" placeholder="Placa, modelo ou cliente...">
+      </div>
+      <button class="btn" onclick="location.href='ordem.html?nova=1'">
+        + Nova ordem
+      </button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div class="cartao" style="padding:8px 12px;">
+    <div id="lista"><div class="carregando">Carregando...</div></div>
+  </div>
+</div>
+
+<div class="pagina" id="sem-modulo" style="display:none">
+  <div class="bloqueio">
+    <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/>
+      <path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5"/>
+    </svg>
+    <h2>VexOS não está ativo</h2>
+    <p>O controle de ordens de serviço é um adicional da sua assinatura Vextron.</p>
+    <a class="btn" href="https://wa.me/553584111984?text=Ol%C3%A1%2C%20quero%20ativar%20o%20VexOS"
+       target="_blank" rel="noopener">Ativar o VexOS</a>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let veiculos = [];
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    document.getElementById("quem").textContent = contexto.oficina || contexto.email;
+
+    if (!contexto.temVexOS) {
+      document.getElementById("sem-modulo").style.display = "block";
+      return;
+    }
+    document.getElementById("pagina").style.display = "block";
+    carregar();
+  })();
+
+  async function carregar() {
+    const alvo = document.getElementById("lista");
+    try {
+      /* Traz o dono e a contagem de ordens na mesma consulta. Uma
+         chamada por veículo transformaria uma lista de 50 carros em 50
+         idas ao servidor. */
+      veiculos = await Banco.listar("veiculos",
+        "select=id,placa,marca,modelo,ano,motor,km,ecu," +
+        "clientes(nome,telefone),ordens_servico(id)" +
+        "&order=placa&limit=500");
+      desenhar();
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+      alvo.innerHTML = "";
+    }
+  }
+
+  function desenhar() {
+    const termo = document.getElementById("busca").value.trim().toLowerCase();
+    const alvo = document.getElementById("lista");
+
+    let lista = veiculos;
+    if (termo) {
+      lista = lista.filter(v => {
+        const c = v.clientes || {};
+        return [v.placa, v.marca, v.modelo, v.ano, v.motor, v.ecu, c.nome]
+          .filter(Boolean).join(" ").toLowerCase().includes(termo);
+      });
+    }
+
+    document.getElementById("resumo").textContent =
+      `${lista.length} de ${veiculos.length} veículo(s)`;
+
+    if (!lista.length) {
+      alvo.innerHTML = veiculos.length
+        ? '<div class="vazio">Nada encontrado.</div>'
+        : '<div class="vazio">Nenhum veículo ainda.<br>' +
+          'Os carros são cadastrados ao abrir uma ordem de serviço.</div>';
+      return;
+    }
+
+    let html = '<table class="tabela"><thead><tr>' +
+      '<th style="width:120px">Placa</th><th>Veículo</th>' +
+      '<th class="esconde-cel">Dono atual</th>' +
+      '<th class="esconde-cel" style="width:100px">Km</th>' +
+      '<th style="width:90px">Ordens</th>' +
+      '</tr></thead><tbody>';
+
+    for (const v of lista) {
+      const c = v.clientes || {};
+      const qtd = (v.ordens_servico || []).length;
+      const desc = [v.marca, v.modelo, v.ano].filter(Boolean).join(" ");
+      html += `<tr onclick="location.href='veiculo.html?id=${v.id}'">
+        <td><span class="placa">${esc(formatarPlaca(v.placa))}</span></td>
+        <td>${esc(desc || "—")}
+          ${v.motor ? `<br><span style="color:var(--texto-sec);font-size:12.5px">${esc(v.motor)}</span>` : ""}</td>
+        <td class="esconde-cel">${esc(c.nome || "—")}</td>
+        <td class="esconde-cel" style="color:var(--texto-sec)">${v.km ? Number(v.km).toLocaleString("pt-BR") : "—"}</td>
+        <td>${qtd ? `<span class="selo aberta">${qtd}</span>` : '<span style="color:var(--texto-sec)">—</span>'}</td>
+      </tr>`;
+    }
+    alvo.innerHTML = html + "</tbody></table>";
+  }
+
+  document.getElementById("busca").addEventListener("input", desenhar);
+</script>
+</body>
+</html>

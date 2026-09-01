@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+
+  "//": "As páginas ficam em frontend/, não na raiz. Sem esta linha a Vercel publicaria a raiz do repositório e o site abriria em 404 — ela não adivinha a pasta num projeto estático sem build.",
+  "outputDirectory": "frontend",
+
+  "cleanUrls": true
+}

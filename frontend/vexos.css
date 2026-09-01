@@ -38,11 +38,27 @@ button{font-family:inherit;}
   max-width:1180px; margin:0 auto; padding:0 20px; height:58px;
   display:flex; align-items:center; justify-content:space-between; gap:18px;
 }
+/* Marca: barra laranja + nome com o subtítulo embaixo.
+   O subtítulo existe porque "VexOS" sozinho não diz o que o produto é —
+   e a marca ainda é nova para o cliente. */
 .marca{
-  font-weight:800; font-size:17px; letter-spacing:.4px; color:var(--texto);
-  display:flex; align-items:center; gap:9px;
+  display:flex; align-items:center; gap:11px; color:var(--texto);
 }
-.marca b{color:var(--laranja);}
+.marca-barra{
+  width:4px; height:28px; border-radius:2px;
+  background:var(--laranja); flex:none;
+}
+.marca-nome{
+  font-weight:800; font-size:18px; letter-spacing:.3px; line-height:1.05;
+}
+.marca-nome b{color:var(--laranja);}
+.marca-sub{
+  display:block; font-size:8.5px; color:var(--texto-sec);
+  font-weight:600; letter-spacing:1.4px; margin-top:1px;
+}
+/* No celular o subtítulo sai: a barra do topo já é apertada, e o nome
+   sozinho basta para quem já está dentro do sistema. */
+@media (max-width:600px){ .marca-sub{display:none;} .marca-barra{height:22px;} }
 .topo-nav{display:flex; gap:4px; align-items:center;}
 .topo-nav a{
   color:var(--texto-sec); padding:7px 13px; border-radius:8px;
@@ -186,8 +202,11 @@ h1{font-size:24px; font-weight:800; letter-spacing:-.3px;}
   content:""; display:block; width:52px; height:3px; border-radius:2px;
   background:var(--laranja); margin:0 auto 22px;
 }
+/* No login a marca é maior e centralizada, com a barra em cima em vez
+   de ao lado — deitada, ela fica desequilibrada num bloco centralizado. */
 .login-marca{
-  font-size:26px; font-weight:800; letter-spacing:.5px; margin-bottom:4px;
+  font-size:30px; font-weight:800; letter-spacing:.5px; margin-bottom:5px;
+  line-height:1.1;
 }
 .login-marca b{color:var(--laranja);}
 .login-sub{font-size:12.5px; color:var(--texto-sec); margin-bottom:26px;}

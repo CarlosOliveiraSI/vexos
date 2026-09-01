@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Veículo — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">ORDENS DE SERVIÇO</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html" class="ativo">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta">
+      <span id="quem"></span>
+      <button onclick="sair()">sair</button>
+    </div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1 id="titulo">Veículo</h1>
+      <div class="sub" id="subtitulo"></div>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <a class="btn-linha btn" href="veiculos.html">Voltar</a>
+      <button class="btn" id="btn-os">+ Nova ordem para este veículo</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div class="cartao">
+    <div class="cartao-titulo">Dados do veículo</div>
+    <div class="linha-campos c4">
+      <div class="campo">
+        <label for="marca">Marca</label><input id="marca">
+      </div>
+      <div class="campo">
+        <label for="modelo">Modelo</label><input id="modelo">
+      </div>
+      <div class="campo">
+        <label for="ano">Ano</label><input id="ano">
+      </div>
+      <div class="campo">
+        <label for="motor">Motor</label><input id="motor">
+      </div>
+    </div>
+    <div class="linha-campos c3">
+      <div class="campo">
+        <label for="km">Quilometragem</label><input id="km" type="number">
+      </div>
+      <div class="campo">
+        <label for="ecu">ECU</label><input id="ecu" placeholder="Bosch EDC17CV56">
+      </div>
+      <div class="campo">
+        <label for="chassi">Chassi</label><input id="chassi">
+      </div>
+    </div>
+    <div class="campo" style="margin-bottom:0">
+      <label for="obs">Observações</label>
+      <textarea id="obs" style="min-height:60px"></textarea>
+    </div>
+    <div style="margin-top:14px; text-align:right;">
+      <button class="btn" onclick="salvar()" id="btn-salvar">Salvar</button>
+    </div>
+  </div>
+
+  <div class="cartao">
+    <div class="cartao-titulo">Dono atual</div>
+    <div id="dono"></div>
+  </div>
+
+  <div class="cartao">
+    <div class="cartao-titulo">Histórico de serviços</div>
+    <div id="historico"><div class="carregando">Carregando...</div></div>
+  </div>
+
+  <div class="cartao" id="cartao-analises" style="display:none">
+    <div class="cartao-titulo">Análises de ECU deste veículo</div>
+    <div id="analises"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let veiculo = null;
+  const id = new URLSearchParams(location.search).get("id");
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    document.getElementById("quem").textContent = contexto.oficina || contexto.email;
+    if (!contexto.temVexOS) { location.href = "veiculos.html"; return; }
+    document.getElementById("pagina").style.display = "block";
+    if (!id) { location.href = "veiculos.html"; return; }
+    carregar();
+  })();
+
+  async function carregar() {
+    try {
+      const r = await Banco.listar("veiculos",
+        `id=eq.${id}&select=*,clientes(id,nome,telefone,email)`);
+      veiculo = r && r[0];
+      if (!veiculo) {
+        aviso(document.getElementById("msg"), "Veículo não encontrado.", "erro");
+        return;
+      }
+
+      document.getElementById("titulo").innerHTML =
+        `<span class="placa">${esc(formatarPlaca(veiculo.placa))}</span>`;
+      document.getElementById("subtitulo").textContent =
+        [veiculo.marca, veiculo.modelo, veiculo.ano].filter(Boolean).join(" ");
+
+      for (const c of ["marca","modelo","ano","motor","km","ecu","chassi"]) {
+        document.getElementById(c).value = veiculo[c] || "";
+      }
+      document.getElementById("obs").value = veiculo.observacoes || "";
+
+      const dono = Array.isArray(veiculo.clientes) ? veiculo.clientes[0] : veiculo.clientes;
+      document.getElementById("dono").innerHTML = dono
+        ? `<b>${esc(dono.nome)}</b>
+           ${dono.telefone ? `<br><span style="color:var(--texto-sec)">${esc(dono.telefone)}</span>` : ""}
+           ${dono.email ? `<br><span style="color:var(--texto-sec)">${esc(dono.email)}</span>` : ""}`
+        : '<span style="color:var(--texto-sec)">Nenhum cliente vinculado.</span>';
+
+      carregarHistorico();
+      carregarAnalises();
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+    }
+  }
+
+  async function salvar() {
+    const btn = document.getElementById("btn-salvar");
+    const msg = document.getElementById("msg");
+    btn.disabled = true; btn.textContent = "Salvando...";
+    try {
+      await Banco.atualizar("veiculos", id, {
+        marca: document.getElementById("marca").value.trim() || null,
+        modelo: document.getElementById("modelo").value.trim() || null,
+        ano: document.getElementById("ano").value.trim() || null,
+        motor: document.getElementById("motor").value.trim() || null,
+        km: Number(document.getElementById("km").value) || null,
+        ecu: document.getElementById("ecu").value.trim() || null,
+        chassi: document.getElementById("chassi").value.trim() || null,
+        observacoes: document.getElementById("obs").value.trim() || null,
+      });
+      aviso(msg, "Salvo.", "ok");
+      setTimeout(() => aviso(msg, ""), 2500);
+    } catch (e) {
+      aviso(msg, e.message, "erro");
+    } finally {
+      btn.disabled = false; btn.textContent = "Salvar";
+    }
+  }
+
+  /* O histórico é o que dá valor ao sistema: toda ordem já feita neste
+     carro, inclusive de quando o dono era outro. */
+  async function carregarHistorico() {
+    const alvo = document.getElementById("historico");
+    try {
+      const lista = await Banco.listar("historico_veiculo",
+        `veiculo_id=eq.${id}&order=aberta_em.desc&limit=100`);
+      if (!lista || !lista.length) {
+        alvo.innerHTML = '<div class="vazio">Nenhuma ordem para este veículo ainda.</div>';
+        return;
+      }
+      let html = '<table class="tabela"><thead><tr>' +
+        '<th style="width:60px">Nº</th><th style="width:110px">Data</th>' +
+        '<th>Serviço</th><th class="esconde-cel">Cliente na época</th>' +
+        '<th class="esconde-cel" style="width:90px">Km</th>' +
+        '<th style="width:120px">Situação</th></tr></thead><tbody>';
+      for (const h of lista) {
+        const s = STATUS_OS[h.status] || STATUS_OS.aberta;
+        html += `<tr onclick="location.href='ordem.html?id=${h.os_id}'">
+          <td class="num">${h.numero}</td>
+          <td style="color:var(--texto-sec)">${esc(soData(h.aberta_em))}</td>
+          <td>${esc((h.descricao || "—").slice(0, 70))}
+            ${h.analises ? ' <span class="selo aberta" style="font-size:10px">análise</span>' : ""}</td>
+          <td class="esconde-cel" style="color:var(--texto-sec)">${esc(h.cliente_na_epoca || "—")}</td>
+          <td class="esconde-cel" style="color:var(--texto-sec)">${h.km_entrada ? Number(h.km_entrada).toLocaleString("pt-BR") : "—"}</td>
+          <td><span class="selo ${s.cor}">${s.texto}</span></td>
+        </tr>`;
+      }
+      alvo.innerHTML = html + "</tbody></table>";
+    } catch (e) {
+      alvo.innerHTML = `<div class="vazio">${esc(e.message)}</div>`;
+    }
+  }
+
+  /* Todas as análises de ECU já feitas neste carro, de qualquer ordem.
+     É o registro que protege a oficina se o cliente reclamar depois. */
+  async function carregarAnalises() {
+    try {
+      const ordens = await Banco.listar("ordens_servico",
+        `veiculo_id=eq.${id}&select=id,numero`);
+      if (!ordens || !ordens.length) return;
+      const ids = ordens.map(o => o.id).join(",");
+      const lista = await Banco.listar("os_analises",
+        `os_id=in.(${ids})&order=registrada_em.desc`);
+      if (!lista || !lista.length) return;
+
+      const numeroDaOS = {};
+      ordens.forEach(o => { numeroDaOS[o.id] = o.numero; });
+
+      document.getElementById("cartao-analises").style.display = "block";
+      let html = "";
+      for (const a of lista) {
+        html += `<div style="border:1px solid var(--borda);border-radius:9px;padding:14px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+            <b>${esc(a.ecu || "ECU não identificada")}</b>
+            <span style="color:var(--texto-sec);font-size:12.5px">
+              OS ${numeroDaOS[a.os_id] || "?"} · ${esc(dataBR(a.registrada_em))}</span>
+          </div>
+          ${a.arquivo_b ? `<div style="font-size:13px;color:var(--texto-sec)">Gravado: <span style="font-family:Consolas,monospace;color:var(--texto)">${esc(a.arquivo_b)}</span></div>` : ""}
+          ${a.resumo ? `<div style="font-size:13px;margin-top:8px;line-height:1.6">${esc(a.resumo)}</div>` : ""}
+        </div>`;
+      }
+      document.getElementById("analises").innerHTML = html;
+    } catch (e) { /* sem análises, o cartão fica escondido */ }
+  }
+
+  document.getElementById("btn-os").addEventListener("click", () => {
+    /* Leva a placa na URL para a ordem já abrir com o veículo
+       preenchido — sem isso, quem vem daqui digitaria a placa de novo. */
+    location.href = "ordem.html?nova=1&placa=" +
+                    encodeURIComponent(veiculo ? veiculo.placa : "");
+  });
+</script>
+</body>
+</html>

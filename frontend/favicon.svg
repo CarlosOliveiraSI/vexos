@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Ícone do VexOS: a barra laranja da marca sobre fundo escuro.
+       Mesmo elemento do cabeçalho, para o cliente reconhecer a aba. -->
+  <rect width="64" height="64" rx="14" fill="#17171b"/>
+  <rect x="12" y="14" width="7" height="36" rx="3.5" fill="#ff7a00"/>
+  <text x="26" y="41" font-family="Segoe UI,system-ui,sans-serif"
+        font-size="25" font-weight="800" fill="#f2f2f2">V</text>
+  <text x="42" y="41" font-family="Segoe UI,system-ui,sans-serif"
+        font-size="25" font-weight="800" fill="#ff7a00">X</text>
+</svg>

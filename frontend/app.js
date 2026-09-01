@@ -21,7 +21,7 @@ const VEXOS = {
   /* PREENCHER com a chave publicável (sb_publishable_...).
      Pode ficar no código: é feita para viajar no navegador, e quem
      protege os dados é o RLS. Nunca ponha aqui a secret key. */
-  chave: "COLE_AQUI_A_CHAVE_PUBLICAVEL",
+  chave: "sb_publishable_BGhB6fL4pGFYhXPAqrUIBw_hG45VMIe",
 };
 
 
@@ -155,15 +155,59 @@ const Banco = {
    Login
    --------------------------------------------------------------------- */
 async function entrar(email, senha) {
-  const r = await fetch(`${VEXOS.url}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: { apikey: VEXOS.chave, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.trim().toLowerCase(), password: senha }),
-  });
-  const d = await r.json();
+  /* A chave não foi preenchida: o erro seria de credencial, e a pessoa
+     passaria horas testando senha. */
+  if (!VEXOS.chave || VEXOS.chave.startsWith("COLE_AQUI")) {
+    throw new Error("O sistema não está configurado: falta a chave do "
+                  + "Supabase no app.js. Fale com o suporte.");
+  }
+
+  let r, d;
+  try {
+    r = await fetch(`${VEXOS.url}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { apikey: VEXOS.chave, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password: senha }),
+    });
+  } catch (e) {
+    throw new Error("Não foi possível falar com o servidor. Verifique sua "
+                  + "conexão.");
+  }
+
+  try { d = await r.json(); } catch (e) { d = {}; }
 
   if (!r.ok || !d.access_token) {
-    throw new Error(d.error_description || "E-mail ou senha incorretos.");
+    /* Cada recusa tem um motivo diferente, e tratar todas como "senha
+       errada" faz a pessoa procurar no lugar errado. O Supabase manda
+       o motivo em error_code ou na mensagem — repassamos traduzido. */
+    const codigo = (d.error_code || d.error || "").toString();
+    const texto  = (d.msg || d.error_description || d.message || "").toString();
+
+    if (r.status === 401 && /invalid api key|no api key/i.test(texto)) {
+      throw new Error("A chave configurada não é válida para este projeto "
+                    + "do Supabase.");
+    }
+    if (/email_not_confirmed|not confirmed/i.test(codigo + texto)) {
+      throw new Error("Este e-mail ainda não foi confirmado. No painel do "
+                    + "Supabase, marque o usuário como confirmado.");
+    }
+    if (/invalid_credentials|invalid login/i.test(codigo + texto)) {
+      throw new Error("E-mail ou senha incorretos.");
+    }
+    if (r.status === 429 || /rate|too many/i.test(codigo + texto)) {
+      throw new Error("Muitas tentativas seguidas. Espere um minuto e "
+                    + "tente de novo.");
+    }
+    if (r.status >= 500) {
+      throw new Error("O servidor de autenticação respondeu com erro "
+                    + r.status + ". Tente novamente em instantes.");
+    }
+    /* Não reconhecido: mostra o que veio, em vez de inventar um
+       diagnóstico. É melhor uma mensagem estranha e verdadeira do que
+       uma clara e errada. */
+    throw new Error(texto
+      ? `Não foi possível entrar (${r.status}): ${texto}`
+      : `Não foi possível entrar. O servidor respondeu ${r.status}.`);
   }
 
   Sessao.gravar({

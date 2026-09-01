@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clientes — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">ORDENS DE SERVIÇO</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html" class="ativo">Clientes</a>
+    </nav>
+    <div class="topo-conta">
+      <span id="quem"></span>
+      <button onclick="sair()">sair</button>
+    </div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Clientes</h1>
+      <div class="sub" id="resumo"></div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div class="busca">
+        <input id="busca" placeholder="Nome ou telefone...">
+      </div>
+      <button class="btn" onclick="abrirNovo()">+ Novo cliente</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div class="cartao" style="padding:8px 12px;">
+    <div id="lista"><div class="carregando">Carregando...</div></div>
+  </div>
+</div>
+
+<div class="pagina" id="sem-modulo" style="display:none">
+  <div class="bloqueio">
+    <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/>
+      <path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5"/>
+    </svg>
+    <h2>VexOS não está ativo</h2>
+    <p>O controle de ordens de serviço é um adicional da sua assinatura Vextron.</p>
+    <a class="btn" href="https://wa.me/553584111984?text=Ol%C3%A1%2C%20quero%20ativar%20o%20VexOS"
+       target="_blank" rel="noopener">Ativar o VexOS</a>
+  </div>
+</div>
+
+<!-- janela de cadastro/edição -->
+<div class="modal-fundo" id="modal" style="display:none">
+  <div class="modal">
+    <h2 id="modal-titulo">Novo cliente</h2>
+    <div class="sub">Os dados podem ser preenchidos depois, pela ordem de serviço.</div>
+
+    <div class="aviso" id="modal-msg"></div>
+
+    <div class="campo">
+      <label for="f-nome">Nome</label>
+      <input id="f-nome" placeholder="Nome do cliente">
+    </div>
+    <div class="linha-campos c2">
+      <div class="campo">
+        <label for="f-telefone">Telefone</label>
+        <input id="f-telefone" placeholder="(35) 99999-0000">
+      </div>
+      <div class="campo">
+        <label for="f-documento">CPF / CNPJ</label>
+        <input id="f-documento" placeholder="opcional">
+      </div>
+    </div>
+    <div class="campo">
+      <label for="f-email">E-mail</label>
+      <input id="f-email" type="email" placeholder="opcional">
+    </div>
+    <div class="campo" style="margin-bottom:0">
+      <label for="f-obs">Observações</label>
+      <textarea id="f-obs" style="min-height:60px"></textarea>
+    </div>
+
+    <div class="modal-acoes">
+      <button class="btn-linha btn" onclick="fecharModal()">Cancelar</button>
+      <button class="btn" id="btn-salvar" onclick="salvarCliente()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let clientes = [];
+  let editando = null;
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    document.getElementById("quem").textContent = contexto.oficina || contexto.email;
+
+    if (!contexto.temVexOS) {
+      document.getElementById("sem-modulo").style.display = "block";
+      return;
+    }
+    document.getElementById("pagina").style.display = "block";
+    carregar();
+  })();
+
+  async function carregar() {
+    try {
+      clientes = await Banco.listar("clientes",
+        "select=id,nome,telefone,email,documento,observacoes," +
+        "veiculos(placa)&order=nome&limit=500");
+      desenhar();
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+      document.getElementById("lista").innerHTML = "";
+    }
+  }
+
+  function desenhar() {
+    const termo = document.getElementById("busca").value.trim().toLowerCase();
+    const alvo = document.getElementById("lista");
+
+    let lista = clientes;
+    if (termo) {
+      lista = lista.filter(c =>
+        [c.nome, c.telefone, c.email, c.documento].filter(Boolean)
+          .join(" ").toLowerCase().includes(termo));
+    }
+
+    document.getElementById("resumo").textContent =
+      `${lista.length} de ${clientes.length} cliente(s)`;
+
+    if (!lista.length) {
+      alvo.innerHTML = clientes.length
+        ? '<div class="vazio">Nada encontrado.</div>'
+        : '<div class="vazio">Nenhum cliente ainda.<br>' +
+          'Eles também são cadastrados ao abrir uma ordem de serviço.</div>';
+      return;
+    }
+
+    let html = '<table class="tabela"><thead><tr>' +
+      '<th>Nome</th><th style="width:160px">Telefone</th>' +
+      '<th class="esconde-cel">Veículos</th>' +
+      '<th style="width:70px"></th></tr></thead><tbody>';
+
+    for (const c of lista) {
+      const placas = (c.veiculos || []).map(v => formatarPlaca(v.placa));
+      html += `<tr style="cursor:default">
+        <td><b>${esc(c.nome)}</b>
+          ${c.email ? `<br><span style="color:var(--texto-sec);font-size:12.5px">${esc(c.email)}</span>` : ""}</td>
+        <td>${esc(c.telefone || "—")}</td>
+        <td class="esconde-cel">
+          ${placas.length
+            ? placas.map(p => `<span class="placa" style="font-size:12.5px">${esc(p)}</span>`).join(", ")
+            : '<span style="color:var(--texto-sec)">—</span>'}</td>
+        <td><button class="btn-mini" data-editar="${esc(c.id)}">Editar</button></td>
+      </tr>`;
+    }
+    alvo.innerHTML = html + "</tbody></table>";
+
+    alvo.querySelectorAll("[data-editar]").forEach(el =>
+      el.addEventListener("click", () => abrirEdicao(el.dataset.editar)));
+  }
+
+  document.getElementById("busca").addEventListener("input", desenhar);
+
+  /* ---- janela ---- */
+  function abrirNovo() {
+    editando = null;
+    document.getElementById("modal-titulo").textContent = "Novo cliente";
+    for (const id of ["f-nome","f-telefone","f-documento","f-email","f-obs"]) {
+      document.getElementById(id).value = "";
+    }
+    aviso(document.getElementById("modal-msg"), "");
+    document.getElementById("modal").style.display = "flex";
+    document.getElementById("f-nome").focus();
+  }
+
+  function abrirEdicao(id) {
+    const c = clientes.find(x => x.id === id);
+    if (!c) return;
+    editando = c;
+    document.getElementById("modal-titulo").textContent = "Editar cliente";
+    document.getElementById("f-nome").value = c.nome || "";
+    document.getElementById("f-telefone").value = c.telefone || "";
+    document.getElementById("f-documento").value = c.documento || "";
+    document.getElementById("f-email").value = c.email || "";
+    document.getElementById("f-obs").value = c.observacoes || "";
+    aviso(document.getElementById("modal-msg"), "");
+    document.getElementById("modal").style.display = "flex";
+    document.getElementById("f-nome").focus();
+  }
+
+  function fecharModal() {
+    document.getElementById("modal").style.display = "none";
+  }
+
+  async function salvarCliente() {
+    const msg = document.getElementById("modal-msg");
+    const btn = document.getElementById("btn-salvar");
+    const nome = document.getElementById("f-nome").value.trim();
+
+    if (!nome) { aviso(msg, "Informe o nome.", "erro"); return; }
+
+    btn.disabled = true;
+    btn.textContent = "Salvando...";
+
+    const dados = {
+      nome: nome,
+      telefone: document.getElementById("f-telefone").value.trim() || null,
+      documento: document.getElementById("f-documento").value.trim() || null,
+      email: document.getElementById("f-email").value.trim() || null,
+      observacoes: document.getElementById("f-obs").value.trim() || null,
+    };
+
+    try {
+      if (editando) {
+        await Banco.atualizar("clientes", editando.id, dados);
+      } else {
+        dados.oficina_id = contexto.oficina_id;
+        await Banco.criar("clientes", dados);
+      }
+      fecharModal();
+      carregar();
+    } catch (e) {
+      aviso(msg, e.message || "Não foi possível salvar.", "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salvar";
+    }
+  }
+
+  /* Esc fecha, Enter salva — quem cadastra vários seguidos usa teclado */
+  document.addEventListener("keydown", e => {
+    if (document.getElementById("modal").style.display !== "flex") return;
+    if (e.key === "Escape") fecharModal();
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") salvarCliente();
+  });
+</script>
+</body>
+</html>

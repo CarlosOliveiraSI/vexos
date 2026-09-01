@@ -1,0 +1,11 @@
+# ---- Windows / OneDrive ----
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# ---- editor ----
+.vscode/
+.idea/
+
+# ---- Vercel ----
+.vercel
