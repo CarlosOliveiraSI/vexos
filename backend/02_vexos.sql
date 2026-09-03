@@ -363,7 +363,9 @@ create policy "apaga analises" on os_analises
 -- Histórico do veículo: o que dá valor ao sistema. Toda vez que aquela
 -- placa voltar, o que já foi feito nela aparece — inclusive de quando
 -- o dono era outro.
-create or replace view historico_veiculo as
+
+create or replace view historico_veiculo
+with (security_invoker = true) as
 select
     v.id              as veiculo_id,
     v.oficina_id,

@@ -13,6 +13,10 @@
    PREENCHER: a chave publicável, abaixo.
    ===================================================================== */
 
+/* Versão do VexOS. Subir a cada mudança que valha registrar — aparece
+   na janela "Sobre" e ajuda o suporte a saber o que o cliente tem. */
+const VEXOS_VERSAO = "1.0";
+
 const VEXOS = {
   /* Endereço do projeto no Supabase. O mesmo que o app desktop usa —
      a conta é a mesma nos dois. */
@@ -50,6 +54,15 @@ const Sessao = {
     try { localStorage.removeItem(this._chave); } catch (e) {}
   },
 
+  /* Renovação em curso. Toda página interna dispara várias chamadas ao
+     abrir (perfil, veículo, cliente, itens, histórico), e todas passam
+     por token(). Se o token estiver vencido, sem esta trava cada uma
+     mandaria seu próprio refresh COM O MESMO refresh_token — que é de
+     uso único. A primeira funcionaria; as outras receberiam erro e
+     chamariam limpar(), derrubando a sessão sem motivo aparente. Guardar
+     a promessa em curso faz as demais esperarem a MESMA renovação. */
+  _renovando: null,
+
   /* Token válido para as chamadas. Renova em silêncio quando perto de
      vencer — quem chama não precisa saber que existe expiração. */
   async token() {
@@ -57,15 +70,35 @@ const Sessao = {
     if (!s || !s.access_token) return null;
     if (Date.now() < (s.expira_em || 0) - 60000) return s.access_token;
 
-    const r = await fetch(
-      `${VEXOS.url}/auth/v1/token?grant_type=refresh_token`, {
-        method: "POST",
-        headers: { apikey: VEXOS.chave, "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: s.refresh_token }),
-      });
+    /* Já tem um refresh a caminho: espera ele, não abre outro. */
+    if (this._renovando) return this._renovando;
+
+    this._renovando = this._renovar(s)
+      .finally(() => { this._renovando = null; });
+    return this._renovando;
+  },
+
+  /* O refresh em si, isolado para a trava acima poder memorizá-lo.
+     Devolve o novo access_token, ou null se a renovação falhou. */
+  async _renovar(s) {
+    let r;
+    try {
+      r = await fetch(
+        `${VEXOS.url}/auth/v1/token?grant_type=refresh_token`, {
+          method: "POST",
+          headers: { apikey: VEXOS.chave, "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: s.refresh_token }),
+        });
+    } catch (e) {
+      /* Rede caiu no meio: NÃO limpa a sessão. Sem internet o refresh
+         falha, mas o refresh_token continua válido — apagar aqui
+         deslogaria quem só está momentaneamente offline. */
+      return null;
+    }
     if (!r.ok) { this.limpar(); return null; }
 
-    const d = await r.json();
+    let d;
+    try { d = await r.json(); } catch (e) { return null; }
     if (!d.access_token) { this.limpar(); return null; }
 
     this.gravar({
@@ -250,12 +283,160 @@ async function exigirSessao() {
       oficina_id: p.oficina_id,
       oficina: (of && of.nome) || "",
       modulos: (of && of.modulos) || [],
+      validade: (of && of.validade) || "",
+      status: (of && of.status) || "",
       temVexOS: ((of && of.modulos) || []).includes("vexos"),
     };
   } catch (e) {
     irParaLogin();
     return null;
   }
+}
+
+
+/* ---------------------------------------------------------------------
+   Menu de conta no topo
+
+   Uma função só, usada por todas as páginas: repetir esse HTML em cada
+   uma faria a próxima mudança ter que ser feita seis vezes.
+   --------------------------------------------------------------------- */
+const PAPEL = {
+  admin: "Administrador", dono: "Dono",
+  tecnico: "Técnico", atendente: "Atendente",
+};
+
+function montarMenuConta(ctx) {
+  const alvo = document.getElementById("conta");
+  if (!alvo || !ctx) return;
+
+  const nome = ctx.oficina || ctx.email || "";
+  const inicial = (nome.trim()[0] || "?").toUpperCase();
+
+  alvo.innerHTML = `
+    <button class="conta-botao" id="conta-botao" aria-haspopup="true"
+            aria-expanded="false">
+      <span class="conta-inicial">${esc(inicial)}</span>
+      <span class="conta-nome">${esc(nome)}</span>
+      <svg class="conta-seta" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="conta-menu" id="conta-menu" role="menu">
+      <div class="conta-cabeca">
+        <b>${esc(ctx.nome || nome)}</b>
+        <span>${esc(ctx.email || "")}</span>
+        ${ctx.papel ? `<span class="conta-papel">${esc(PAPEL[ctx.papel] || ctx.papel)}</span>` : ""}
+      </div>
+      <button class="conta-item" role="menuitem" id="conta-vextron">
+        <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/><rect x="9.5" y="9.5" width="5" height="5" rx=".8"/><path d="M9 2.5v2.5M15 2.5v2.5M9 19v2.5M15 19v2.5M2.5 9h2.5M2.5 15h2.5M19 9h2.5M19 15h2.5"/></svg>
+        Sobre o VexOS
+      </button>
+      <button class="conta-item" role="menuitem" id="conta-suporte">
+        <svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.1-3.3A8.4 8.4 0 1 1 21 11.5z"/></svg>
+        Suporte
+      </button>
+      <button class="conta-item sair" role="menuitem" id="conta-sair">
+        <svg viewBox="0 0 24 24"><path d="M15 17l5-5-5-5M20 12H9M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"/></svg>
+        Sair
+      </button>
+    </div>`;
+
+  const botao = document.getElementById("conta-botao");
+  const menu = document.getElementById("conta-menu");
+
+  function alternar(abrir) {
+    const vai = abrir === undefined ? !menu.classList.contains("aberto") : abrir;
+    menu.classList.toggle("aberto", vai);
+    botao.classList.toggle("aberto", vai);
+    botao.setAttribute("aria-expanded", vai ? "true" : "false");
+  }
+
+  botao.addEventListener("click", e => { e.stopPropagation(); alternar(); });
+
+  /* Fecha ao clicar fora e no Esc: menu que só fecha no próprio botão
+     fica preso na frente do conteúdo. */
+  document.addEventListener("click", e => {
+    if (!menu.contains(e.target)) alternar(false);
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") alternar(false);
+  });
+
+  document.getElementById("conta-sair").addEventListener("click", sair);
+  document.getElementById("conta-suporte").addEventListener("click", () => {
+    window.open("https://wa.me/553584111984?text=" +
+      encodeURIComponent("Olá, preciso de ajuda com o VexOS"), "_blank");
+  });
+  document.getElementById("conta-vextron").addEventListener("click", () => {
+    alternar(false);
+    mostrarSobre(ctx);
+  });
+}
+
+
+/* ---------------------------------------------------------------------
+   Janela "Sobre"
+
+   O item antigo abria a página de vendas do Vextron — que não diz nada
+   sobre o VexOS nem sobre a assinatura de quem já está dentro. Esta
+   janela responde o que o cliente logado quer saber: o que é, até
+   quando a assinatura vale, e como pedir ajuda.
+   --------------------------------------------------------------------- */
+function mostrarSobre(ctx) {
+  const anterior = document.getElementById("modal-sobre");
+  if (anterior) anterior.remove();
+
+  /* Validade em dias: "vence em 8 dias" diz mais que uma data que a
+     pessoa teria que comparar com hoje de cabeça. */
+  let validadeTexto = "";
+  if (ctx && ctx.validade) {
+    const fim = new Date(ctx.validade);
+    const dias = Math.ceil((fim - new Date()) / 86400000);
+    const data = fim.toLocaleDateString("pt-BR");
+    if (dias < 0)        validadeTexto = `Vencida em ${data}`;
+    else if (dias === 0) validadeTexto = `Vence hoje (${data})`;
+    else if (dias <= 15) validadeTexto = `Vence em ${dias} dia(s) · ${data}`;
+    else                 validadeTexto = `Ativa até ${data}`;
+  }
+
+  const fundo = document.createElement("div");
+  fundo.className = "modal-fundo";
+  fundo.id = "modal-sobre";
+  fundo.innerHTML = `
+    <div class="modal" style="width:min(440px,100%); text-align:center;">
+      <div class="sobre-marca">
+        <span class="sobre-barra"></span>
+        <span class="sobre-nome">Vex<b>OS</b></span>
+      </div>
+      <div class="sobre-versao">Versão ${esc(VEXOS_VERSAO)}</div>
+
+      <p class="sobre-texto">
+        Controle de ordens de serviço integrado ao Motronix Vextron.
+        Registre o que foi feito em cada veículo e consulte o histórico
+        por placa — inclusive as análises de ECU feitas no aplicativo.
+      </p>
+
+      <div class="sobre-ficha">
+        <div><span>Oficina</span><b>${esc(ctx.oficina || "—")}</b></div>
+        <div><span>Você</span><b>${esc(ctx.nome || ctx.email || "—")}</b></div>
+        ${validadeTexto ? `<div><span>Assinatura</span><b>${esc(validadeTexto)}</b></div>` : ""}
+      </div>
+
+      <div class="modal-acoes" style="justify-content:center;">
+        <button class="btn-linha btn" id="sobre-suporte">Falar com o suporte</button>
+        <button class="btn" id="sobre-fechar">Fechar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(fundo);
+
+  const fechar = () => fundo.remove();
+  document.getElementById("sobre-fechar").addEventListener("click", fechar);
+  fundo.addEventListener("click", e => { if (e.target === fundo) fechar(); });
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key === "Escape") { fechar(); document.removeEventListener("keydown", esc); }
+  });
+  document.getElementById("sobre-suporte").addEventListener("click", () => {
+    window.open("https://wa.me/553584111984?text=" +
+      encodeURIComponent("Olá, preciso de ajuda com o VexOS"), "_blank");
+  });
 }
 
 

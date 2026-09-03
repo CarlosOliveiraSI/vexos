@@ -66,15 +66,83 @@ button{font-family:inherit;}
 }
 .topo-nav a:hover{background:var(--cartao-claro); color:var(--texto);}
 .topo-nav a.ativo{background:var(--laranja-fundo); color:var(--laranja);}
-.topo-conta{
-  display:flex; align-items:center; gap:12px;
-  font-size:12.5px; color:var(--texto-sec);
+/* ---- conta no topo ----
+   Antes eram dois textos soltos: o nome da oficina com cor de link e um
+   "sair" sublinhado ao lado. Parecia que os dois eram clicáveis, e só
+   um era. Agora é um botão só, que abre o menu. */
+.topo-conta{position:relative;}
+
+.conta-botao{
+  display:flex; align-items:center; gap:9px; cursor:pointer;
+  background:transparent; border:1px solid transparent; border-radius:10px;
+  padding:5px 9px 5px 6px; font-family:inherit;
 }
-.topo-conta button{
-  background:none; border:0; color:var(--texto-sec); cursor:pointer;
-  font-size:12.5px; text-decoration:underline; text-underline-offset:2px;
+.conta-botao:hover{background:var(--cartao-claro); border-color:var(--borda);}
+.conta-botao.aberto{background:var(--cartao-claro); border-color:var(--borda);}
+
+.conta-inicial{
+  width:29px; height:29px; border-radius:9px; flex:none;
+  background:var(--laranja-fundo); color:var(--laranja);
+  display:flex; align-items:center; justify-content:center;
+  font-weight:800; font-size:13px;
 }
-.topo-conta button:hover{color:var(--laranja);}
+.conta-nome{
+  font-size:13px; font-weight:600; color:var(--texto);
+  max-width:150px; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; text-align:left;
+}
+.conta-seta{
+  width:13px; height:13px; stroke:var(--texto-sec); fill:none;
+  stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round;
+  transition:transform .15s; flex:none;
+}
+.conta-botao.aberto .conta-seta{transform:rotate(180deg);}
+
+.conta-menu{
+  position:absolute; top:calc(100% + 8px); right:0; z-index:60;
+  background:var(--cartao); border:1px solid var(--borda);
+  border-radius:12px; min-width:224px; padding:6px;
+  box-shadow:0 16px 44px rgba(0,0,0,.55); display:none;
+}
+.conta-menu.aberto{display:block;}
+.conta-cabeca{
+  padding:11px 12px 12px; border-bottom:1px solid var(--borda);
+  margin-bottom:6px;
+}
+.conta-cabeca b{
+  display:block; font-size:13.5px; color:var(--texto); margin-bottom:2px;
+}
+.conta-cabeca span{
+  display:block; font-size:11.5px; color:var(--texto-sec);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.conta-papel{
+  /* inline-flex + width:max-content: dentro de um bloco, o
+     inline-block herdava a largura toda e o selo virava uma faixa */
+  display:inline-flex; width:max-content;
+  margin-top:7px; font-size:10px; font-weight:700;
+  padding:2px 8px; border-radius:20px; letter-spacing:.4px;
+  background:var(--laranja-fundo); color:var(--laranja-claro);
+  text-transform:uppercase;
+}
+.conta-item{
+  display:flex; align-items:center; gap:10px; width:100%;
+  background:none; border:0; border-radius:8px; cursor:pointer;
+  padding:9px 12px; font-size:13px; color:var(--texto);
+  font-family:inherit; text-align:left;
+}
+.conta-item:hover{background:var(--cartao-claro);}
+.conta-item svg{
+  width:15px; height:15px; stroke:var(--texto-sec); fill:none;
+  stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none;
+}
+.conta-item.sair:hover{color:var(--erro);}
+.conta-item.sair:hover svg{stroke:var(--erro);}
+
+@media (max-width:600px){
+  .conta-nome{display:none;}
+  .conta-menu{right:0; min-width:210px;}
+}
 
 .pagina{max-width:1180px; margin:0 auto; padding:26px 20px 60px;}
 
@@ -215,6 +283,36 @@ h1{font-size:24px; font-weight:800; letter-spacing:-.3px;}
   font-size:11.5px; color:var(--texto-sec); margin-top:20px;
   padding-top:16px; border-top:1px solid var(--borda); line-height:1.7;
 }
+
+/* ---- janela "Sobre" ---- */
+.sobre-marca{
+  display:flex; align-items:center; justify-content:center; gap:11px;
+  margin-bottom:4px;
+}
+.sobre-barra{
+  width:4px; height:30px; border-radius:2px; background:var(--laranja);
+}
+.sobre-nome{font-size:26px; font-weight:800; letter-spacing:.4px;}
+.sobre-nome b{color:var(--laranja);}
+.sobre-versao{
+  font-size:12px; color:var(--texto-sec); margin-bottom:18px;
+}
+.sobre-texto{
+  font-size:13.5px; color:var(--texto-sec); line-height:1.7;
+  margin-bottom:20px;
+}
+.sobre-ficha{
+  background:var(--fundo); border:1px solid var(--borda);
+  border-radius:var(--r); padding:4px 14px; margin-bottom:22px;
+  text-align:left;
+}
+.sobre-ficha div{
+  display:flex; justify-content:space-between; gap:14px;
+  padding:10px 0; border-bottom:1px solid var(--borda); font-size:13px;
+}
+.sobre-ficha div:last-child{border-bottom:0;}
+.sobre-ficha span{color:var(--texto-sec);}
+.sobre-ficha b{color:var(--texto); text-align:right;}
 
 /* ---- janela ---- */
 .modal-fundo{

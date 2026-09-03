@@ -22,10 +22,7 @@
       <a href="veiculos.html">Veículos</a>
       <a href="clientes.html" class="ativo">Clientes</a>
     </nav>
-    <div class="topo-conta">
-      <span id="quem"></span>
-      <button onclick="sair()">sair</button>
-    </div>
+    <div class="topo-conta" id="conta"></div>
   </div>
 </header>
 
@@ -110,7 +107,7 @@
   (async function () {
     contexto = await exigirSessao();
     if (!contexto) return;
-    document.getElementById("quem").textContent = contexto.oficina || contexto.email;
+    montarMenuConta(contexto);
 
     if (!contexto.temVexOS) {
       document.getElementById("sem-modulo").style.display = "block";
