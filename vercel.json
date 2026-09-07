@@ -1,13 +1,8 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-
-  "//": "VexOS: site estático (frontend/) + funções Python (api/). Antes era só estático via outputDirectory; com funções, o build passa a ser explícito. As rotas preservam as URLs limpas do site (/ordens -> frontend/ordens.html) e expõem /api/* como funções.",
-
   "builds": [
     { "src": "api/*.py", "use": "@vercel/python" },
     { "src": "frontend/**", "use": "@vercel/static" }
   ],
-
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" },
     { "src": "/", "dest": "/frontend/index.html" },
