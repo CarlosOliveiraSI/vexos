@@ -293,6 +293,13 @@ function montarMenuConta(ctx) {
       if (location.pathname.endsWith("financeiro.html")) a.className = "ativo";
       nav.appendChild(a);
     }
+    if (nav && !nav.querySelector('a[href="usuarios.html"]')) {
+      const u = document.createElement("a");
+      u.href = "usuarios.html";
+      u.textContent = "Usuários";
+      if (location.pathname.endsWith("usuarios.html")) u.className = "ativo";
+      nav.appendChild(u);
+    }
   }
 
   const nome = ctx.oficina || ctx.email || "";

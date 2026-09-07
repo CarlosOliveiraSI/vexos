@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Usuários — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+<style>
+  .u-lista{width:100%; border-collapse:collapse;}
+  .u-lista th{text-align:left; font-size:11px; color:var(--texto-sec); text-transform:uppercase; letter-spacing:.5px; padding:0 12px 12px; font-weight:600;}
+  .u-lista td{padding:12px; border-top:1px solid var(--borda); font-size:14px; vertical-align:middle;}
+  .u-papel{font-size:11px; padding:3px 10px; border-radius:20px; font-weight:600; background:var(--cartao-claro); color:var(--texto-sec); text-transform:capitalize;}
+  .u-papel.dono, .u-papel.admin{background:var(--laranja-fundo); color:var(--laranja);}
+  .u-inativo{opacity:.5;}
+  .u-tag-inativo{font-size:11px; color:#f04a4a; margin-left:8px;}
+  .u-acao{background:none; border:1px solid var(--borda); color:var(--texto-sec); padding:5px 12px; border-radius:8px; font-size:12.5px; cursor:pointer; font-family:inherit;}
+  .u-acao:hover{border-color:var(--laranja); color:var(--laranja);}
+  .u-cred{background:var(--laranja-fundo); border:1px solid var(--laranja); border-radius:10px; padding:14px 16px; margin-top:4px; font-size:13px;}
+  .u-cred b{color:var(--laranja-claro);}
+</style>
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">USUÁRIOS</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta" id="conta"></div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Usuários da oficina</h1>
+      <div class="sub" id="resumo"></div>
+    </div>
+    <div id="acao-nova"></div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div class="cartao" id="cartao-lista" style="padding:8px 12px; display:none">
+    <div id="lista"><div class="carregando">Carregando...</div></div>
+  </div>
+</div>
+
+<!-- janela de novo usuário -->
+<div class="modal-fundo" id="modal" style="display:none">
+  <div class="modal">
+    <h2>Novo usuário</h2>
+    <div class="sub">O funcionário entra com o e-mail e a senha que você definir aqui.</div>
+
+    <div class="aviso" id="modal-msg"></div>
+
+    <div class="campo">
+      <label for="f-nome">Nome</label>
+      <input id="f-nome" placeholder="Nome do funcionário">
+    </div>
+    <div class="campo">
+      <label for="f-email">E-mail (login)</label>
+      <input id="f-email" type="email" placeholder="funcionario@exemplo.com">
+    </div>
+    <div class="linha-campos c2">
+      <div class="campo">
+        <label for="f-senha">Senha</label>
+        <input id="f-senha" type="text" placeholder="mínimo 6 caracteres">
+      </div>
+      <div class="campo">
+        <label for="f-papel">Papel</label>
+        <select id="f-papel">
+          <option value="tecnico">Técnico</option>
+          <option value="atendente">Atendente</option>
+          <option value="dono">Dono</option>
+        </select>
+      </div>
+    </div>
+    <div class="sub" style="margin-top:-4px">A senha fica visível para você anotar e repassar ao funcionário.</div>
+
+    <div class="modal-acoes">
+      <button class="btn-linha btn" onclick="fecharModal()">Cancelar</button>
+      <button class="btn" id="btn-salvar" onclick="salvarUsuario()">Criar usuário</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let usuarios = [];
+  let meuId = null;
+
+  function msg(t, tipo){ const m = document.getElementById("msg"); m.textContent = t || ""; m.className = "aviso" + (tipo ? " " + tipo : ""); m.style.display = t ? "block" : "none"; }
+
+  async function descobrirMeuId() {
+    // o contexto não guarda o uuid do usuário; pegamos do próprio
+    // Supabase para saber qual linha da lista sou "eu".
+    try {
+      const token = await Sessao.token();
+      const r = await fetch(VEXOS.url + "/auth/v1/user", {
+        headers: { apikey: VEXOS.chave, Authorization: "Bearer " + token },
+      });
+      const d = await r.json();
+      return d.id || null;
+    } catch (e) { return null; }
+  }
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    montarMenuConta(contexto);
+
+    document.getElementById("pagina").style.display = "block";
+
+    if (!contexto.temVexOS) {
+      msg("O módulo VexOS não está ativo na sua assinatura.");
+      return;
+    }
+    // gestão de usuários é só do dono/admin
+    if (contexto.papel !== "dono" && contexto.papel !== "admin") {
+      msg("Esta área é restrita ao dono da oficina.");
+      return;
+    }
+
+    document.getElementById("acao-nova").innerHTML =
+      '<button class="btn" onclick="abrirNovo()">+ Novo usuário</button>';
+    document.getElementById("cartao-lista").style.display = "block";
+    meuId = await descobrirMeuId();
+    carregar();
+  })();
+
+  async function carregar() {
+    try {
+      usuarios = await Banco.listar("perfis",
+        "select=id,nome,papel,ativo&order=ativo.desc,nome.asc") || [];
+    } catch (e) {
+      document.getElementById("lista").innerHTML =
+        '<div class="vazio">Não foi possível carregar os usuários.</div>';
+      return;
+    }
+    render();
+  }
+
+  function render() {
+    const ativos = usuarios.filter(u => u.ativo).length;
+    document.getElementById("resumo").textContent =
+      usuarios.length + " usuário(s) · " + ativos + " ativo(s)";
+
+    if (!usuarios.length) {
+      document.getElementById("lista").innerHTML =
+        '<div class="vazio">Nenhum usuário ainda.</div>';
+      return;
+    }
+
+    let html = '<table class="u-lista"><tr><th>Nome</th><th>Papel</th><th style="text-align:right">Ação</th></tr>';
+    for (const u of usuarios) {
+      const eu = (u.id === meuId);
+      const inativo = !u.ativo;
+      html += `<tr class="${inativo ? "u-inativo" : ""}">
+        <td>${esc(u.nome || "—")}${inativo ? '<span class="u-tag-inativo">inativo</span>' : ""}${eu ? ' <span class="sub" style="font-size:11px">(você)</span>' : ""}</td>
+        <td><span class="u-papel ${esc(u.papel)}">${esc(u.papel)}</span></td>
+        <td style="text-align:right">${botaoAcao(u, eu)}</td>
+      </tr>`;
+    }
+    html += '</table>';
+    document.getElementById("lista").innerHTML = html;
+  }
+
+  function botaoAcao(u, eu) {
+    // não dá para desativar a si mesmo nem o último dono ativo
+    if (eu) return '';
+    const donosAtivos = usuarios.filter(x => x.ativo && (x.papel === "dono" || x.papel === "admin")).length;
+    if (u.ativo && (u.papel === "dono" || u.papel === "admin") && donosAtivos <= 1) return '';
+    if (u.ativo) {
+      return `<button class="u-acao" onclick="alternar('${esc(u.id)}', false)">Desativar</button>`;
+    }
+    return `<button class="u-acao" onclick="alternar('${esc(u.id)}', true)">Reativar</button>`;
+  }
+
+  async function alternar(id, ativar) {
+    try {
+      await Banco.atualizar("perfis", id, { ativo: ativar });
+      msg("");
+      carregar();
+    } catch (e) {
+      msg("Não foi possível alterar o usuário.", "erro");
+    }
+  }
+
+  function abrirNovo() {
+    document.getElementById("f-nome").value = "";
+    document.getElementById("f-email").value = "";
+    document.getElementById("f-senha").value = "";
+    document.getElementById("f-papel").value = "tecnico";
+    aviso(document.getElementById("modal-msg"), "");
+    document.getElementById("modal").style.display = "flex";
+  }
+  function fecharModal() { document.getElementById("modal").style.display = "none"; }
+
+  async function salvarUsuario() {
+    const mm = document.getElementById("modal-msg");
+    const nome = document.getElementById("f-nome").value.trim();
+    const email = document.getElementById("f-email").value.trim();
+    const senha = document.getElementById("f-senha").value;
+    const papel = document.getElementById("f-papel").value;
+
+    if (!nome) { aviso(mm, "Informe o nome.", "erro"); return; }
+    if (!email || !email.includes("@")) { aviso(mm, "Informe um e-mail válido.", "erro"); return; }
+    if (senha.length < 6) { aviso(mm, "A senha precisa ter ao menos 6 caracteres.", "erro"); return; }
+
+    const btn = document.getElementById("btn-salvar");
+    btn.disabled = true; btn.textContent = "Criando...";
+
+    try {
+      // criação de login exige o backend (service key) — não dá pelo Supabase direto
+      const token = await Sessao.token();
+      const r = await fetch("/api/usuarios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ nome, email, senha, papel }),
+      });
+      const d = await r.json();
+      if (!r.ok) { aviso(mm, d.erro || "Não foi possível criar o usuário.", "erro"); return; }
+
+      fecharModal();
+      msg(`Usuário "${nome}" criado. Login: ${email}`, "ok");
+      carregar();
+    } catch (e) {
+      aviso(mm, "Falha de conexão. Tente novamente.", "erro");
+    } finally {
+      btn.disabled = false; btn.textContent = "Criar usuário";
+    }
+  }
+</script>
+</body>
+</html>
