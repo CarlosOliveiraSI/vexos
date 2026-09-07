@@ -181,7 +181,7 @@
     document.getElementById("acao-nova").innerHTML =
       '<button class="btn" onclick="abrirNovo()">+ Novo usuário</button>';
     document.getElementById("cartao-lista").style.display = "block";
-    meuId = await descobrirMeuId();
+    meuId = contexto.id;
     carregar();
   })();
 

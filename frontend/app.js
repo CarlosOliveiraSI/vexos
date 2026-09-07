@@ -74,6 +74,7 @@ const Sessao = {
 
     this.gravar({
       email: s.email,
+      user_id: s.user_id || null,
       access_token: d.access_token,
       refresh_token: d.refresh_token || s.refresh_token,
       expira_em: Date.now() + (d.expires_in || 3600) * 1000,
@@ -216,6 +217,7 @@ async function entrar(email, senha) {
 
   Sessao.gravar({
     email: email.trim().toLowerCase(),
+    user_id: (d.user && d.user.id) || null,
     access_token: d.access_token,
     refresh_token: d.refresh_token,
     expira_em: Date.now() + (d.expires_in || 3600) * 1000,
@@ -240,8 +242,26 @@ async function exigirSessao() {
   if (!s || !s.refresh_token) { irParaLogin(); return null; }
 
   try {
+    // Descobre o id do usuário logado. Vem da sessão (gravado no login);
+    // se for uma sessão antiga sem esse campo, busca no Supabase.
+    let uid = s.user_id;
+    if (!uid) {
+      try {
+        const tok = await Sessao.token();
+        const ru = await fetch(VEXOS.url + "/auth/v1/user", {
+          headers: { apikey: VEXOS.chave, Authorization: "Bearer " + tok },
+        });
+        const du = await ru.json();
+        uid = du && du.id;
+      } catch (e) { uid = null; }
+    }
+
+    // Filtra pelo MEU perfil. Sem o filtro, o RLS devolve todos os
+    // colegas da oficina e pegar perfis[0] traria o usuário errado
+    // (foi o bug do menu mostrar nome/papel de outra pessoa).
+    const filtro = uid ? `&id=eq.${uid}` : "";
     const perfis = await Banco.listar("perfis",
-      "select=nome,papel,oficina_id,oficinas(nome,status,validade,modulos)");
+      "select=id,nome,papel,oficina_id,oficinas(nome,status,validade,modulos)" + filtro);
     const p = perfis && perfis[0];
     if (!p) {
       alert("Sua conta não está vinculada a nenhuma oficina. Fale com o suporte.");
@@ -250,7 +270,7 @@ async function exigirSessao() {
     }
     const of = Array.isArray(p.oficinas) ? p.oficinas[0] : p.oficinas;
     return {
-      email: s.email, nome: p.nome, papel: p.papel,
+      id: p.id, email: s.email, nome: p.nome, papel: p.papel,
       oficina_id: p.oficina_id,
       oficina: (of && of.nome) || "",
       modulos: (of && of.modulos) || [],
