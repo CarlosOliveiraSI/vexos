@@ -204,6 +204,10 @@ def _validar_entrada(dados):
 
     if not email or "@" not in email:
         return None, "Informe um e-mail válido."
+    # o cadastro comercial usa só o domínio da empresa — trava aqui
+    # também, não só na tela (defesa no servidor).
+    if not email.endswith("@motronixtech.com.br"):
+        return None, "O e-mail deve ser do domínio @motronixtech.com.br."
     if len(senha) < 6:
         return None, "A senha precisa ter ao menos 6 caracteres."
     if not nome:

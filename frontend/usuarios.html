@@ -18,6 +18,24 @@
   .u-acao:hover{border-color:var(--laranja); color:var(--laranja);}
   .u-cred{background:var(--laranja-fundo); border:1px solid var(--laranja); border-radius:10px; padding:14px 16px; margin-top:4px; font-size:13px;}
   .u-cred b{color:var(--laranja-claro);}
+
+  /* e-mail com domínio fixo */
+  .email-dominio{display:flex; align-items:stretch; border:1px solid var(--borda); border-radius:var(--r,10px); overflow:hidden; background:var(--cartao);}
+  .email-dominio input{border:0 !important; border-radius:0 !important; flex:1; min-width:0; background:transparent;}
+  .email-dominio span{display:flex; align-items:center; padding:0 12px; background:var(--cartao-claro); color:var(--texto-sec); font-size:13px; white-space:nowrap; border-left:1px solid var(--borda);}
+
+  /* select customizado no estilo VexOS (o <select> nativo abre com o tema do SO) */
+  .sel{position:relative;}
+  .sel-botao{width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    background:var(--cartao); border:1px solid var(--borda); border-radius:var(--r,10px);
+    color:var(--texto); padding:10px 12px; font-size:14px; font-family:inherit; cursor:pointer;}
+  .sel-botao:hover{border-color:var(--laranja);}
+  .sel-botao svg{color:var(--texto-sec); flex:none;}
+  .sel-opcoes{position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:20;
+    background:var(--cartao); border:1px solid var(--borda); border-radius:var(--r,10px);
+    box-shadow:0 8px 24px rgba(0,0,0,.4); overflow:hidden;}
+  .sel-op{padding:10px 12px; font-size:14px; cursor:pointer; color:var(--texto);}
+  .sel-op:hover{background:var(--laranja-fundo); color:var(--laranja);}
 </style>
 </head>
 <body>
@@ -69,7 +87,10 @@
     </div>
     <div class="campo">
       <label for="f-email">E-mail (login)</label>
-      <input id="f-email" type="email" placeholder="funcionario@exemplo.com">
+      <div class="email-dominio">
+        <input id="f-email" placeholder="pedro" autocomplete="off">
+        <span>@motronixtech.com.br</span>
+      </div>
     </div>
     <div class="linha-campos c2">
       <div class="campo">
@@ -77,12 +98,18 @@
         <input id="f-senha" type="text" placeholder="mínimo 6 caracteres">
       </div>
       <div class="campo">
-        <label for="f-papel">Papel</label>
-        <select id="f-papel">
-          <option value="tecnico">Técnico</option>
-          <option value="atendente">Atendente</option>
-          <option value="dono">Dono</option>
-        </select>
+        <label>Papel</label>
+        <div class="sel" id="sel-papel">
+          <button type="button" class="sel-botao" id="sel-botao" onclick="abrirSel()">
+            <span id="sel-valor">Técnico</span>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="sel-opcoes" id="sel-opcoes" style="display:none">
+            <div class="sel-op" onclick="escolherPapel('tecnico','Técnico')">Técnico</div>
+            <div class="sel-op" onclick="escolherPapel('atendente','Atendente')">Atendente</div>
+            <div class="sel-op" onclick="escolherPapel('dono','Dono')">Dono</div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="sub" style="margin-top:-4px">A senha fica visível para você anotar e repassar ao funcionário.</div>
@@ -99,6 +126,25 @@
   let contexto = null;
   let usuarios = [];
   let meuId = null;
+  let papelEscolhido = "tecnico";
+
+  function abrirSel(){
+    const o = document.getElementById("sel-opcoes");
+    o.style.display = o.style.display === "none" ? "block" : "none";
+  }
+  function escolherPapel(valor, rotulo){
+    papelEscolhido = valor;
+    document.getElementById("sel-valor").textContent = rotulo;
+    document.getElementById("sel-opcoes").style.display = "none";
+  }
+  // fecha o dropdown ao clicar fora
+  document.addEventListener("click", (e) => {
+    const s = document.getElementById("sel-papel");
+    if (s && !s.contains(e.target)) {
+      const o = document.getElementById("sel-opcoes");
+      if (o) o.style.display = "none";
+    }
+  });
 
   function msg(t, tipo){ const m = document.getElementById("msg"); m.textContent = t || ""; m.className = "aviso" + (tipo ? " " + tipo : ""); m.style.display = t ? "block" : "none"; }
 
@@ -201,7 +247,7 @@
     document.getElementById("f-nome").value = "";
     document.getElementById("f-email").value = "";
     document.getElementById("f-senha").value = "";
-    document.getElementById("f-papel").value = "tecnico";
+    escolherPapel("tecnico", "Técnico");
     aviso(document.getElementById("modal-msg"), "");
     document.getElementById("modal").style.display = "flex";
   }
@@ -210,13 +256,18 @@
   async function salvarUsuario() {
     const mm = document.getElementById("modal-msg");
     const nome = document.getElementById("f-nome").value.trim();
-    const email = document.getElementById("f-email").value.trim();
+    const usuario = document.getElementById("f-email").value.trim().toLowerCase();
     const senha = document.getElementById("f-senha").value;
-    const papel = document.getElementById("f-papel").value;
+    const papel = papelEscolhido;
 
     if (!nome) { aviso(mm, "Informe o nome.", "erro"); return; }
-    if (!email || !email.includes("@")) { aviso(mm, "Informe um e-mail válido.", "erro"); return; }
+    // só a parte antes do @; o domínio é fixo
+    if (!usuario || !/^[a-z0-9._-]+$/.test(usuario)) {
+      aviso(mm, "Informe o usuário (só letras, números, ponto ou hífen).", "erro"); return;
+    }
     if (senha.length < 6) { aviso(mm, "A senha precisa ter ao menos 6 caracteres.", "erro"); return; }
+
+    const email = usuario + "@motronixtech.com.br";
 
     const btn = document.getElementById("btn-salvar");
     btn.disabled = true; btn.textContent = "Criando...";
