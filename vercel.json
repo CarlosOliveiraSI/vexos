@@ -1,12 +1,4 @@
 {
-  "builds": [
-    { "src": "api/*.py", "use": "@vercel/python" },
-    { "src": "frontend/**", "use": "@vercel/static" }
-  ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/", "dest": "/frontend/index.html" },
-    { "src": "/(.*\\.[a-zA-Z0-9]+)", "dest": "/frontend/$1" },
-    { "src": "/(.*)", "dest": "/frontend/$1.html" }
-  ]
+  "outputDirectory": "frontend",
+  "cleanUrls": true
 }
