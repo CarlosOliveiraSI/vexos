@@ -1,8 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
 
-  "//": "As páginas ficam em frontend/, não na raiz. Sem esta linha a Vercel publicaria a raiz do repositório e o site abriria em 404 — ela não adivinha a pasta num projeto estático sem build.",
-  "outputDirectory": "frontend",
+  "//": "VexOS: site estático (frontend/) + funções Python (api/). Antes era só estático via outputDirectory; com funções, o build passa a ser explícito. As rotas preservam as URLs limpas do site (/ordens -> frontend/ordens.html) e expõem /api/* como funções.",
 
-  "cleanUrls": true
+  "builds": [
+    { "src": "api/*.py", "use": "@vercel/python" },
+    { "src": "frontend/**", "use": "@vercel/static" }
+  ],
+
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/", "dest": "/frontend/index.html" },
+    { "src": "/(.*\\.[a-zA-Z0-9]+)", "dest": "/frontend/$1" },
+    { "src": "/(.*)", "dest": "/frontend/$1.html" }
+  ]
 }

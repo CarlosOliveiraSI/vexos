@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financeiro — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+<style>
+  /* específico da aba financeiro — o resto vem do vexos.css */
+  .fin-cards{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:16px;}
+  .fin-card{background:linear-gradient(160deg,var(--cartao-claro),var(--cartao));
+    border:1px solid var(--borda); border-radius:16px; padding:20px 22px;}
+  .fin-card .rot{font-size:11px; color:var(--texto-sec); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;}
+  .fin-card .val{font-size:34px; font-weight:800; font-variant-numeric:tabular-nums;}
+  .fin-card .val.grande{font-size:42px;}
+  .fin-card .apoio{font-size:12.5px; margin-top:8px; color:var(--texto-sec);}
+  .fin-card.destaque{border-color:var(--laranja); background:linear-gradient(160deg,var(--laranja-fundo),var(--cartao));}
+  .fin-card.destaque .val{color:var(--laranja-claro);}
+  .fin-card .delta{color:var(--verde,#3fb950);}
+  .fin-card .delta.neg{color:#f04a4a;}
+  .fin-painel{background:var(--cartao); border:1px solid var(--borda); border-radius:16px; padding:22px; margin-top:2px;}
+  .fin-painel h2{font-size:12px; color:var(--texto-sec); text-transform:uppercase; letter-spacing:1px; margin-bottom:18px; font-weight:700;}
+  .fin-barras{display:flex; align-items:flex-end; gap:16px; height:190px; padding:0 6px;}
+  .fin-col{flex:1; display:flex; flex-direction:column; align-items:center; gap:8px; height:100%; justify-content:flex-end;}
+  .fin-barra{width:100%; max-width:52px; background:linear-gradient(180deg,var(--laranja-claro),var(--laranja)); border-radius:7px 7px 0 0; min-height:3px; transition:height .3s ease;}
+  .fin-barra.fraca{background:linear-gradient(180deg,#3a3a42,#2a2a31);}
+  .fin-lbl{font-size:11px; color:var(--texto-sec);}
+  .fin-topo-val{font-size:11px; color:var(--texto); font-weight:600; font-variant-numeric:tabular-nums;}
+  .fin-vazio{color:var(--texto-sec); font-size:14px; padding:40px 0; text-align:center;}
+</style>
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">FINANCEIRO</span>
+      </span>
+    </div>
+    <nav class="topo-nav" id="nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta" id="conta"></div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Financeiro</h1>
+      <div class="sub">Valor dos serviços prestados — ordens concluídas.</div>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div id="conteudo" style="display:none">
+    <div class="fin-cards">
+      <div class="fin-card destaque">
+        <div class="rot">Faturado no mês</div>
+        <div class="val grande" id="val-mes">—</div>
+        <div class="apoio delta" id="val-delta"></div>
+      </div>
+      <div class="fin-card">
+        <div class="rot">Em aberto (não concluídas)</div>
+        <div class="val" id="val-aberto">—</div>
+        <div class="apoio" id="val-aberto-ordens"></div>
+      </div>
+      <div class="fin-card">
+        <div class="rot">Ticket médio por OS</div>
+        <div class="val" id="val-ticket">—</div>
+        <div class="apoio" id="val-ticket-ordens"></div>
+      </div>
+    </div>
+
+    <div class="fin-painel">
+      <h2>Faturamento mês a mês</h2>
+      <div class="fin-barras" id="barras"></div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  const BRL = new Intl.NumberFormat("pt-BR", {style:"currency", currency:"BRL", maximumFractionDigits:0});
+  const MES_CURTO = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+
+  function msg(t){ const m = document.getElementById("msg"); m.textContent = t; m.style.display = t ? "block" : "none"; }
+
+  (async function(){
+    const ctx = await exigirSessao();
+    if(!ctx) return;
+    montarMenuConta(ctx);
+
+    document.getElementById("pagina").style.display = "block";
+
+    // Financeiro faz parte do módulo VexOS.
+    if(!ctx.temVexOS){
+      msg("O módulo VexOS não está ativo na sua assinatura.");
+      return;
+    }
+
+    // Aba é só do dono. A tela esconde; o banco também recusa (dupla
+    // proteção). Se não for dono, nem chama as funções.
+    if(ctx.papel !== "dono" && ctx.papel !== "admin"){
+      msg("Esta área é restrita ao dono da oficina.");
+      const l = document.querySelector('#nav a[href="financeiro.html"]');
+      if(l) l.remove();
+      return;
+    }
+
+    try {
+      const [mensal, aberto] = await Promise.all([
+        Banco.chamar("financeiro_mensal", { p_meses: 6 }),
+        Banco.chamar("financeiro_em_aberto", {}),
+      ]);
+      render(mensal || [], (aberto && aberto[0]) || {em_aberto:0, ordens:0});
+      document.getElementById("conteudo").style.display = "block";
+    } catch(e){
+      msg("Não foi possível carregar o financeiro. Tente novamente.");
+    }
+  })();
+
+  function render(mensal, aberto){
+    // mensal: [{mes, faturado, ordens}] ordenado por mês
+    const nMeses = mensal.length;
+    const atual = nMeses ? mensal[nMeses-1] : {faturado:0, ordens:0};
+    const anterior = nMeses > 1 ? mensal[nMeses-2] : null;
+
+    // número grande
+    document.getElementById("val-mes").textContent = BRL.format(atual.faturado || 0);
+
+    // variação vs mês anterior
+    const delta = document.getElementById("val-delta");
+    if(anterior && Number(anterior.faturado) > 0){
+      const pct = ((atual.faturado - anterior.faturado) / anterior.faturado) * 100;
+      const sobe = pct >= 0;
+      delta.textContent = `${sobe ? "▲" : "▼"} ${Math.abs(pct).toFixed(0)}% vs. mês anterior (${BRL.format(anterior.faturado)})`;
+      delta.className = "apoio delta" + (sobe ? "" : " neg");
+    } else {
+      delta.textContent = "";
+    }
+
+    // em aberto
+    document.getElementById("val-aberto").textContent = BRL.format(aberto.em_aberto || 0);
+    document.getElementById("val-aberto-ordens").textContent =
+      (aberto.ordens || 0) + " ordem(ns) em andamento";
+
+    // ticket médio do mês atual
+    const ticket = (atual.ordens > 0) ? (atual.faturado / atual.ordens) : 0;
+    document.getElementById("val-ticket").textContent = BRL.format(ticket);
+    document.getElementById("val-ticket-ordens").textContent =
+      (atual.ordens || 0) + " ordem(ns) concluída(s) no mês";
+
+    // gráfico de barras
+    const barras = document.getElementById("barras");
+    if(!nMeses){
+      barras.outerHTML = '<div class="fin-vazio">Ainda não há ordens concluídas com valor para exibir.</div>';
+      return;
+    }
+    const max = Math.max(...mensal.map(m => Number(m.faturado) || 0), 1);
+    barras.innerHTML = mensal.map((m, i) => {
+      const v = Number(m.faturado) || 0;
+      const alt = Math.max(3, (v / max) * 100);
+      const ultimo = (i === nMeses - 1);
+      const d = new Date(m.mes + "T00:00:00");
+      const lbl = MES_CURTO[d.getMonth()];
+      const compacto = v >= 1000 ? "R$ " + (v/1000).toFixed(1).replace(".", ",") + "k" : BRL.format(v);
+      return `<div class="fin-col">
+        <span class="fin-topo-val">${compacto}</span>
+        <div class="fin-barra${ultimo ? "" : " fraca"}" style="height:${alt}%"></div>
+        <span class="fin-lbl">${lbl}</span>
+      </div>`;
+    }).join("");
+  }
+</script>
+</body>
+</html>

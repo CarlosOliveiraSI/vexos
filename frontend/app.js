@@ -54,15 +54,6 @@ const Sessao = {
     try { localStorage.removeItem(this._chave); } catch (e) {}
   },
 
-  /* Renovação em curso. Toda página interna dispara várias chamadas ao
-     abrir (perfil, veículo, cliente, itens, histórico), e todas passam
-     por token(). Se o token estiver vencido, sem esta trava cada uma
-     mandaria seu próprio refresh COM O MESMO refresh_token — que é de
-     uso único. A primeira funcionaria; as outras receberiam erro e
-     chamariam limpar(), derrubando a sessão sem motivo aparente. Guardar
-     a promessa em curso faz as demais esperarem a MESMA renovação. */
-  _renovando: null,
-
   /* Token válido para as chamadas. Renova em silêncio quando perto de
      vencer — quem chama não precisa saber que existe expiração. */
   async token() {
@@ -70,35 +61,15 @@ const Sessao = {
     if (!s || !s.access_token) return null;
     if (Date.now() < (s.expira_em || 0) - 60000) return s.access_token;
 
-    /* Já tem um refresh a caminho: espera ele, não abre outro. */
-    if (this._renovando) return this._renovando;
-
-    this._renovando = this._renovar(s)
-      .finally(() => { this._renovando = null; });
-    return this._renovando;
-  },
-
-  /* O refresh em si, isolado para a trava acima poder memorizá-lo.
-     Devolve o novo access_token, ou null se a renovação falhou. */
-  async _renovar(s) {
-    let r;
-    try {
-      r = await fetch(
-        `${VEXOS.url}/auth/v1/token?grant_type=refresh_token`, {
-          method: "POST",
-          headers: { apikey: VEXOS.chave, "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: s.refresh_token }),
-        });
-    } catch (e) {
-      /* Rede caiu no meio: NÃO limpa a sessão. Sem internet o refresh
-         falha, mas o refresh_token continua válido — apagar aqui
-         deslogaria quem só está momentaneamente offline. */
-      return null;
-    }
+    const r = await fetch(
+      `${VEXOS.url}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: { apikey: VEXOS.chave, "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: s.refresh_token }),
+      });
     if (!r.ok) { this.limpar(); return null; }
 
-    let d;
-    try { d = await r.json(); } catch (e) { return null; }
+    const d = await r.json();
     if (!d.access_token) { this.limpar(); return null; }
 
     this.gravar({
@@ -308,6 +279,21 @@ const PAPEL = {
 function montarMenuConta(ctx) {
   const alvo = document.getElementById("conta");
   if (!alvo || !ctx) return;
+
+  // Link "Financeiro" no menu: só o dono vê. Fica aqui (e não fixo no
+  // HTML de cada página) para a regra de acesso morar num lugar só e
+  // não aparecer para técnico/atendente. O banco recusa de qualquer
+  // forma; isto é só para não mostrar o que não se pode abrir.
+  if (ctx.papel === "dono" || ctx.papel === "admin") {
+    const nav = document.querySelector(".topo-nav");
+    if (nav && !nav.querySelector('a[href="financeiro.html"]')) {
+      const a = document.createElement("a");
+      a.href = "financeiro.html";
+      a.textContent = "Financeiro";
+      if (location.pathname.endsWith("financeiro.html")) a.className = "ativo";
+      nav.appendChild(a);
+    }
+  }
 
   const nome = ctx.oficina || ctx.email || "";
   const inicial = (nome.trim()[0] || "?").toUpperCase();
