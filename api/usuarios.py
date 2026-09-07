@@ -172,7 +172,7 @@ def _apagar_login(id_usuario):
         pass  # melhor esforço; nada a fazer se falhar
 
 
-def _criar_perfil(id_usuario, oficina_id, nome, papel):
+def _criar_perfil(id_usuario, oficina_id, nome, papel, email):
     """Insere o perfil vinculando o novo usuário à oficina. bool de sucesso."""
     url = f"{SUPABASE_URL}/rest/v1/perfis"
     corpo = json.dumps({
@@ -180,6 +180,7 @@ def _criar_perfil(id_usuario, oficina_id, nome, papel):
         "oficina_id": oficina_id,
         "nome": nome,
         "papel": papel,
+        "email": email,
         "ativo": True,
     }).encode("utf-8")
     req = urllib.request.Request(url, data=corpo, method="POST", headers={
@@ -191,6 +192,69 @@ def _criar_perfil(id_usuario, oficina_id, nome, papel):
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return r.status in (200, 201)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def _perfil_alvo(id_alvo):
+    """
+    Lê (oficina_id, papel, ativo) do usuário a ser editado, com service
+    key. Usado para garantir que o gestor só mexe em quem é da própria
+    oficina.
+    """
+    url = (f"{SUPABASE_URL}/rest/v1/perfis"
+           f"?id=eq.{id_alvo}&select=oficina_id,papel,ativo")
+    req = urllib.request.Request(url, headers={
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            linhas = json.loads(r.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            ValueError, OSError):
+        return None
+    return linhas[0] if linhas else None
+
+
+def _atualizar_perfil(id_alvo, campos):
+    """Atualiza nome/papel na tabela perfis. bool de sucesso."""
+    if not campos:
+        return True
+    url = f"{SUPABASE_URL}/rest/v1/perfis?id=eq.{id_alvo}"
+    req = urllib.request.Request(
+        url, data=json.dumps(campos).encode("utf-8"), method="PATCH",
+        headers={
+            "apikey": SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return r.status in (200, 204)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def _atualizar_login(id_alvo, campos):
+    """
+    Atualiza email e/ou senha da conta de auth (service key).
+    `campos` pode ter "email" e/ou "password". bool de sucesso.
+    """
+    if not campos:
+        return True
+    url = f"{SUPABASE_URL}/auth/v1/admin/users/{id_alvo}"
+    req = urllib.request.Request(
+        url, data=json.dumps(campos).encode("utf-8"), method="PUT",
+        headers={
+            "apikey": SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+            "Content-Type": "application/json",
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return r.status == 200
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
         return False
 
@@ -248,7 +312,7 @@ def tratar(handler):
     if msg:
         return erro(400, msg)
 
-    if not _criar_perfil(id_novo, oficina_id, limpo["nome"], limpo["papel"]):
+    if not _criar_perfil(id_novo, oficina_id, limpo["nome"], limpo["papel"], limpo["email"]):
         _apagar_login(id_novo)   # rollback: não deixa login sem perfil
         return erro(500, "Não foi possível concluir o cadastro.")
 
@@ -256,9 +320,86 @@ def tratar(handler):
                           "nome": limpo["nome"], "papel": limpo["papel"]})
 
 
+def tratar_editar(handler):
+    """
+    Edita um usuário existente. Aceita nome/papel (perfil) e/ou
+    email/senha (login). O gestor só edita quem é da PRÓPRIA oficina.
+    Corpo: { id, nome?, papel?, email?, senha? }
+    """
+    if not (SUPABASE_URL and SUPABASE_SERVICE_KEY):
+        return erro(500, "Backend não configurado.")
+
+    token = extrair_token(handler)
+    id_gestor = _usuario_do_token(token)
+    if not id_gestor:
+        return erro(401, "Não autenticado.")
+
+    oficina_gestor = _perfil_gestor(id_gestor)
+    if not oficina_gestor:
+        return erro(403, "Apenas o dono ou administrador pode editar usuários.")
+
+    try:
+        tam = int(handler.headers.get("Content-Length") or 0)
+        dados = json.loads(handler.rfile.read(tam).decode("utf-8")) if tam else {}
+    except (ValueError, OSError):
+        return erro(400, "Requisição inválida.")
+
+    id_alvo = (dados.get("id") or "").strip()
+    if not id_alvo:
+        return erro(400, "Usuário não informado.")
+
+    # o alvo tem de existir e ser da MESMA oficina do gestor
+    alvo = _perfil_alvo(id_alvo)
+    if not alvo or alvo.get("oficina_id") != oficina_gestor:
+        return erro(403, "Usuário não pertence à sua oficina.")
+
+    # ---- monta as mudanças, validando cada campo enviado ----
+    perfil_campos = {}
+    login_campos = {}
+
+    if "nome" in dados:
+        nome = (dados.get("nome") or "").strip()
+        if not nome:
+            return erro(400, "Informe o nome.")
+        perfil_campos["nome"] = nome
+
+    if "papel" in dados:
+        papel = (dados.get("papel") or "").strip()
+        if papel not in PAPEIS_PERMITIDOS:
+            return erro(400, "Papel inválido.")
+        perfil_campos["papel"] = papel
+
+    if "email" in dados and (dados.get("email") or "").strip():
+        email = dados["email"].strip().lower()
+        if "@" not in email or not email.endswith("@motronixtech.com.br"):
+            return erro(400, "O e-mail deve ser do domínio @motronixtech.com.br.")
+        login_campos["email"] = email
+        perfil_campos["email"] = email   # mantém a cópia em perfis em dia
+
+    if "senha" in dados and (dados.get("senha") or ""):
+        senha = dados["senha"]
+        if len(senha) < 6:
+            return erro(400, "A senha precisa ter ao menos 6 caracteres.")
+        login_campos["password"] = senha
+
+    if not perfil_campos and not login_campos:
+        return erro(400, "Nada para atualizar.")
+
+    # ---- aplica: perfil primeiro (barato/reversível), login depois ----
+    if not _atualizar_perfil(id_alvo, perfil_campos):
+        return erro(500, "Não foi possível atualizar o perfil.")
+    if not _atualizar_login(id_alvo, login_campos):
+        return erro(500, "Perfil atualizado, mas falhou ao mudar login/senha.")
+
+    return resposta(200, {"ok": True, "id": id_alvo})
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         responder_handler(self, tratar(self))
 
+    def do_PATCH(self):
+        responder_handler(self, tratar_editar(self))
+
     def do_GET(self):
-        responder_handler(self, erro(405, "Use POST."))
+        responder_handler(self, erro(405, "Use POST ou PATCH."))

@@ -76,8 +76,8 @@
 <!-- janela de novo usuário -->
 <div class="modal-fundo" id="modal" style="display:none">
   <div class="modal">
-    <h2>Novo usuário</h2>
-    <div class="sub">O funcionário entra com o e-mail e a senha que você definir aqui.</div>
+    <h2 id="modal-titulo">Novo usuário</h2>
+    <div class="sub" id="modal-sub">O funcionário entra com o e-mail e a senha que você definir aqui.</div>
 
     <div class="aviso" id="modal-msg"></div>
 
@@ -94,7 +94,7 @@
     </div>
     <div class="linha-campos c2">
       <div class="campo">
-        <label for="f-senha">Senha</label>
+        <label for="f-senha" id="lbl-senha">Senha</label>
         <input id="f-senha" type="text" placeholder="mínimo 6 caracteres">
       </div>
       <div class="campo">
@@ -112,7 +112,7 @@
         </div>
       </div>
     </div>
-    <div class="sub" style="margin-top:-4px">A senha fica visível para você anotar e repassar ao funcionário.</div>
+    <div class="sub" id="dica-senha" style="margin-top:-4px">A senha fica visível para você anotar e repassar ao funcionário.</div>
 
     <div class="modal-acoes">
       <button class="btn-linha btn" onclick="fecharModal()">Cancelar</button>
@@ -188,7 +188,7 @@
   async function carregar() {
     try {
       usuarios = await Banco.listar("perfis",
-        "select=id,nome,papel,ativo&order=ativo.desc,nome.asc") || [];
+        "select=id,nome,email,papel,ativo&order=ativo.desc,nome.asc") || [];
     } catch (e) {
       document.getElementById("lista").innerHTML =
         '<div class="vazio">Não foi possível carregar os usuários.</div>';
@@ -208,14 +208,18 @@
       return;
     }
 
-    let html = '<table class="u-lista"><tr><th>Nome</th><th>Papel</th><th style="text-align:right">Ação</th></tr>';
+    let html = '<table class="u-lista"><tr><th>Nome</th><th>Login</th><th>Papel</th><th style="text-align:right">Ações</th></tr>';
     for (const u of usuarios) {
       const eu = (u.id === meuId);
       const inativo = !u.ativo;
       html += `<tr class="${inativo ? "u-inativo" : ""}">
         <td>${esc(u.nome || "—")}${inativo ? '<span class="u-tag-inativo">inativo</span>' : ""}${eu ? ' <span class="sub" style="font-size:11px">(você)</span>' : ""}</td>
+        <td class="sub" style="font-size:13px">${esc(u.email || "—")}</td>
         <td><span class="u-papel ${esc(u.papel)}">${esc(u.papel)}</span></td>
-        <td style="text-align:right">${botaoAcao(u, eu)}</td>
+        <td style="text-align:right; white-space:nowrap">
+          <button class="u-acao" onclick="abrirEditar('${esc(u.id)}')">Editar</button>
+          ${botaoAcao(u, eu)}
+        </td>
       </tr>`;
     }
     html += '</table>';
@@ -243,14 +247,47 @@
     }
   }
 
+  let editandoId = null;
+
   function abrirNovo() {
+    editandoId = null;
+    document.getElementById("modal-titulo").textContent = "Novo usuário";
+    document.getElementById("modal-sub").textContent = "O funcionário entra com o e-mail e a senha que você definir aqui.";
     document.getElementById("f-nome").value = "";
     document.getElementById("f-email").value = "";
+    document.getElementById("f-email").disabled = false;
     document.getElementById("f-senha").value = "";
+    document.getElementById("f-senha").placeholder = "mínimo 6 caracteres";
+    document.getElementById("dica-senha").textContent = "A senha fica visível para você anotar e repassar ao funcionário.";
+    document.getElementById("btn-salvar").textContent = "Criar usuário";
     escolherPapel("tecnico", "Técnico");
     aviso(document.getElementById("modal-msg"), "");
     document.getElementById("modal").style.display = "flex";
   }
+
+  const ROTULO = { tecnico: "Técnico", atendente: "Atendente", dono: "Dono", admin: "Admin" };
+
+  function abrirEditar(id) {
+    const u = usuarios.find(x => x.id === id);
+    if (!u) return;
+    editandoId = id;
+    document.getElementById("modal-titulo").textContent = "Editar usuário";
+    document.getElementById("modal-sub").textContent = "Altere o que precisar. A senha só muda se você preencher.";
+    document.getElementById("f-nome").value = u.nome || "";
+    // email: mostra só a parte antes do @, domínio fixo
+    const usuario = (u.email || "").split("@")[0];
+    document.getElementById("f-email").value = usuario;
+    document.getElementById("f-email").disabled = false;
+    document.getElementById("f-senha").value = "";
+    document.getElementById("f-senha").placeholder = "deixe em branco para manter";
+    document.getElementById("dica-senha").textContent = "Preencha a senha só se quiser trocá-la.";
+    document.getElementById("btn-salvar").textContent = "Salvar alterações";
+    const papel = (u.papel === "admin") ? "admin" : u.papel;
+    escolherPapel(papel, ROTULO[papel] || papel);
+    aviso(document.getElementById("modal-msg"), "");
+    document.getElementById("modal").style.display = "flex";
+  }
+
   function fecharModal() { document.getElementById("modal").style.display = "none"; }
 
   async function salvarUsuario() {
@@ -261,20 +298,43 @@
     const papel = papelEscolhido;
 
     if (!nome) { aviso(mm, "Informe o nome.", "erro"); return; }
-    // só a parte antes do @; o domínio é fixo
     if (!usuario || !/^[a-z0-9._-]+$/.test(usuario)) {
       aviso(mm, "Informe o usuário (só letras, números, ponto ou hífen).", "erro"); return;
     }
-    if (senha.length < 6) { aviso(mm, "A senha precisa ter ao menos 6 caracteres.", "erro"); return; }
-
     const email = usuario + "@motronixtech.com.br";
-
     const btn = document.getElementById("btn-salvar");
-    btn.disabled = true; btn.textContent = "Criando...";
+    const token = await Sessao.token();
 
+    // ------- EDITAR -------
+    if (editandoId) {
+      if (senha && senha.length < 6) { aviso(mm, "A senha precisa ter ao menos 6 caracteres.", "erro"); return; }
+      const corpo = { id: editandoId, nome, papel, email };
+      if (senha) corpo.senha = senha;   // só troca se preencheu
+
+      btn.disabled = true; btn.textContent = "Salvando...";
+      try {
+        const r = await fetch("/api/usuarios", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+          body: JSON.stringify(corpo),
+        });
+        const d = await r.json();
+        if (!r.ok) { aviso(mm, d.erro || "Não foi possível salvar.", "erro"); return; }
+        fecharModal();
+        msg(`Usuário "${nome}" atualizado.`, "ok");
+        carregar();
+      } catch (e) {
+        aviso(mm, "Falha de conexão. Tente novamente.", "erro");
+      } finally {
+        btn.disabled = false; btn.textContent = "Salvar alterações";
+      }
+      return;
+    }
+
+    // ------- CRIAR -------
+    if (senha.length < 6) { aviso(mm, "A senha precisa ter ao menos 6 caracteres.", "erro"); return; }
+    btn.disabled = true; btn.textContent = "Criando...";
     try {
-      // criação de login exige o backend (service key) — não dá pelo Supabase direto
-      const token = await Sessao.token();
       const r = await fetch("/api/usuarios", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
@@ -282,7 +342,6 @@
       });
       const d = await r.json();
       if (!r.ok) { aviso(mm, d.erro || "Não foi possível criar o usuário.", "erro"); return; }
-
       fecharModal();
       msg(`Usuário "${nome}" criado. Login: ${email}`, "ok");
       carregar();
