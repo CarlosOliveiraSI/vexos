@@ -320,6 +320,13 @@ function montarMenuConta(ctx) {
       if (location.pathname.endsWith("usuarios.html")) u.className = "ativo";
       nav.appendChild(u);
     }
+    if (nav && !nav.querySelector('a[href="oficina.html"]')) {
+      const o = document.createElement("a");
+      o.href = "oficina.html";
+      o.textContent = "Oficina";
+      if (location.pathname.endsWith("oficina.html")) o.className = "ativo";
+      nav.appendChild(o);
+    }
   }
 
   const nome = ctx.oficina || ctx.email || "";

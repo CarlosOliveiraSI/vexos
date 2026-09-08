@@ -362,3 +362,104 @@ h1{font-size:24px; font-weight:800; letter-spacing:-.3px;}
   .pagina{padding:20px 16px 50px;}
   .esconde-cel{display:none;}
 }
+
+/* =====================================================================
+   Tela de dados da oficina
+   ===================================================================== */
+.logo-area{display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap;}
+.logo-caixa{
+  width:180px; height:110px; flex:none;
+  background:var(--fundo); border:1px dashed var(--borda);
+  border-radius:var(--r); display:flex; align-items:center;
+  justify-content:center; overflow:hidden; padding:10px;
+}
+.logo-caixa img{max-width:100%; max-height:100%; object-fit:contain;}
+.logo-vazio{color:var(--texto-sec); font-size:12.5px;}
+.logo-controles{flex:1; min-width:240px;}
+
+/* =====================================================================
+   Via impressa da ordem de serviço
+
+   Escondida na tela; no papel ela é a única coisa que sai. Cores
+   próprias, claras: a interface é escura, e imprimir fundo escuro
+   gasta tinta e sai ilegível na maioria das impressoras.
+   ===================================================================== */
+#impressao{display:none;}
+
+@media print{
+  /* Some com a interface inteira e mostra só a via. Esconder por
+     seletor de tela (em vez de montar outra página) mantém uma fonte
+     de verdade: o que está no formulário é o que sai impresso. */
+  .topo, .pagina{display:none !important;}
+
+  html, body{
+    background:#fff !important; color:#111 !important;
+    font-size:11.5pt; line-height:1.45;
+  }
+  #impressao{display:block; padding:0;}
+
+  @page{margin:14mm 12mm;}
+
+  .via-cabeca{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    gap:20px; padding-bottom:12px; border-bottom:2px solid #111;
+  }
+  .via-empresa{display:flex; gap:14px; align-items:flex-start;}
+  .via-logo{max-width:150px; max-height:56px; object-fit:contain;}
+  .via-nome{font-size:15pt; font-weight:800; line-height:1.2;}
+  .via-linha{font-size:9pt; color:#444;}
+
+  .via-os{text-align:right; flex:none;}
+  .via-os span{font-size:8pt; letter-spacing:1.2px; color:#444; display:block;}
+  .via-os b{font-size:22pt; line-height:1; display:block;}
+
+  .via-fichas{
+    display:grid; grid-template-columns:1fr 1fr; gap:0 22px; margin-top:14px;
+  }
+  .via-ficha h3, .via-bloco h3{
+    font-size:8.5pt; letter-spacing:1px; text-transform:uppercase;
+    color:#444; margin-bottom:5px; font-weight:700;
+  }
+  .via-campo{display:flex; gap:8px; font-size:10pt; line-height:1.6;}
+  .via-campo span{color:#555; min-width:62px;}
+  .via-campo b{font-weight:600;}
+
+  .via-bloco{margin-top:14px;}
+  /* break-inside evita que um diagnóstico longo seja cortado no meio
+     na virada da folha */
+  .via-bloco, .via-ficha, .via-assinaturas{break-inside:avoid;}
+  .via-bloco p{font-size:10pt; white-space:pre-wrap;}
+
+  .via-tabela{width:100%; border-collapse:collapse; margin-top:16px;}
+  .via-tabela th{
+    text-align:left; font-size:8.5pt; letter-spacing:.8px;
+    text-transform:uppercase; color:#444; border-bottom:1px solid #111;
+    padding:0 6px 5px;
+  }
+  .via-tabela td{
+    padding:6px; font-size:10pt; border-bottom:1px solid #ddd;
+  }
+  .via-tabela .num{text-align:right; white-space:nowrap;}
+  .via-total{
+    text-align:right; margin-top:8px; font-size:11pt;
+  }
+  .via-total b{font-size:13pt;}
+
+  .via-rodape-texto{
+    margin-top:18px; padding:9px 11px; border:1px solid #bbb;
+    border-radius:4px; font-size:9pt; color:#333; white-space:pre-wrap;
+  }
+
+  .via-assinaturas{
+    display:grid; grid-template-columns:1fr 1fr; gap:34px;
+    margin-top:34px; font-size:9pt; text-align:center; color:#333;
+  }
+  .via-assinaturas span{
+    display:block; border-top:1px solid #111; margin-bottom:5px;
+  }
+
+  .via-pe{
+    margin-top:20px; padding-top:8px; border-top:1px solid #ddd;
+    font-size:8pt; color:#666; text-align:center;
+  }
+}

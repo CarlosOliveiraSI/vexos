@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dados da oficina — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">ORDENS DE SERVIÇO</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta" id="conta"></div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Dados da oficina</h1>
+      <div class="sub">Aparecem no cabeçalho da ordem de serviço que você entrega ao cliente.</div>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <a class="btn-linha btn" href="ordens.html">Voltar</a>
+      <button class="btn" id="btn-salvar" onclick="salvar()">Salvar</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <!-- ---- logo ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Logo</div>
+    <div class="logo-area">
+      <div class="logo-caixa" id="logo-caixa">
+        <span class="logo-vazio" id="logo-vazio">Sem logo</span>
+        <img id="logo-img" alt="" style="display:none">
+      </div>
+      <div class="logo-controles">
+        <p class="sub" style="margin:0 0 12px">
+          PNG com fundo transparente fica melhor no papel. A imagem é
+          reduzida no seu computador antes de ser enviada — pode mandar
+          a original, mesmo grande.
+        </p>
+        <input type="file" id="arquivo" accept="image/*" style="display:none"
+               onchange="escolherLogo(this)">
+        <button class="btn-mini" onclick="document.getElementById('arquivo').click()">
+          Escolher imagem
+        </button>
+        <button class="btn-mini btn-perigo" id="btn-remover-logo"
+                onclick="removerLogo()" style="display:none">Remover</button>
+        <div class="sub" id="logo-info" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- identificação ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Identificação</div>
+
+    <div class="linha-campos c2">
+      <div class="campo">
+        <label for="nome">Nome da oficina</label>
+        <input id="nome" placeholder="Auto Center Silva">
+      </div>
+      <div class="campo">
+        <label for="documento">CNPJ ou CPF</label>
+        <input id="documento" placeholder="00.000.000/0001-00">
+      </div>
+    </div>
+
+    <div class="linha-campos c2">
+      <div class="campo">
+        <label for="telefone">Telefone</label>
+        <input id="telefone" placeholder="(35) 99999-0000">
+      </div>
+      <div class="campo">
+        <label for="email">E-mail</label>
+        <input id="email" placeholder="contato@oficina.com.br">
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- endereço ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Endereço</div>
+
+    <div class="campo">
+      <label for="endereco">Rua, número e bairro</label>
+      <input id="endereco" placeholder="Av. Brasil, 1200 — Centro">
+    </div>
+
+    <div class="linha-campos c3">
+      <div class="campo">
+        <label for="cidade">Cidade</label>
+        <input id="cidade" placeholder="Pouso Alegre">
+      </div>
+      <div class="campo">
+        <label for="uf">UF</label>
+        <input id="uf" maxlength="2" placeholder="MG"
+               oninput="this.value=this.value.toUpperCase()">
+      </div>
+      <div class="campo">
+        <label for="cep">CEP</label>
+        <input id="cep" placeholder="37550-000">
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- rodapé ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Rodapé da ordem impressa</div>
+    <div class="campo" style="margin-bottom:0">
+      <label for="rodape_os">Texto livre</label>
+      <textarea id="rodape_os" style="min-height:70px"
+        placeholder="Garantia de 90 dias sobre o serviço executado. Peças conforme nota do fornecedor."></textarea>
+      <div class="sub" style="margin-top:6px">
+        Sai no pé de toda ordem impressa. Bom lugar para garantia e
+        condições de pagamento.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let logoAtual = null;      // data URL, ou null
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    montarMenuConta(contexto);
+
+    /* Só dono e admin editam. O banco recusa de qualquer jeito (a
+       política de UPDATE confere o papel), mas mandar o técnico para
+       uma tela que ele não pode salvar é perda de tempo dele. */
+    if (contexto.papel !== "dono" && contexto.papel !== "admin") {
+      location.href = "ordens.html";
+      return;
+    }
+    document.getElementById("pagina").style.display = "block";
+    carregar();
+  })();
+
+  async function carregar() {
+    try {
+      const r = await Banco.listar("oficinas",
+        `id=eq.${contexto.oficina_id}&select=nome,documento,telefone,email,` +
+        `endereco,cidade,uf,cep,rodape_os,logo`);
+      const o = r && r[0];
+      if (!o) return;
+
+      for (const c of ["nome","documento","telefone","email","endereco",
+                       "cidade","uf","cep","rodape_os"]) {
+        const el = document.getElementById(c);
+        if (el) el.value = o[c] || "";
+      }
+      mostrarLogo(o.logo || null);
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+    }
+  }
+
+  function mostrarLogo(dataUrl) {
+    logoAtual = dataUrl;
+    const img = document.getElementById("logo-img");
+    const vazio = document.getElementById("logo-vazio");
+    const btn = document.getElementById("btn-remover-logo");
+    if (dataUrl) {
+      img.src = dataUrl;
+      img.style.display = "block";
+      vazio.style.display = "none";
+      btn.style.display = "inline-block";
+    } else {
+      img.removeAttribute("src");
+      img.style.display = "none";
+      vazio.style.display = "block";
+      btn.style.display = "none";
+      document.getElementById("logo-info").textContent = "";
+    }
+  }
+
+  function removerLogo() {
+    mostrarLogo(null);
+    document.getElementById("logo-info").textContent =
+      "Logo removida — clique em Salvar para confirmar.";
+  }
+
+  /* -------------------------------------------------------------
+     Redimensionar no navegador antes de enviar
+
+     Sem isto, o dono da oficina manda a foto de 4 MB que tem no
+     celular para ocupar 3 cm no papel: linha gigante no banco,
+     upload lento no 4G da oficina e impressão pesada.
+
+     PNG preserva fundo transparente, que é o que a maioria das logos
+     usa; se o resultado ficar grande demais (foto salva em .png), cai
+     para JPEG com fundo branco, que é o que o papel tem mesmo.
+     ------------------------------------------------------------- */
+  const LADO_MAX = 400;
+  const LIMITE_PNG = 200 * 1024;
+
+  function escolherLogo(input) {
+    const arq = input.files && input.files[0];
+    input.value = "";                 // permite escolher o mesmo arquivo de novo
+    if (!arq) return;
+
+    const info = document.getElementById("logo-info");
+    if (!/^image\//.test(arq.type)) {
+      aviso(document.getElementById("msg"), "Escolha um arquivo de imagem.", "erro");
+      return;
+    }
+    info.textContent = "Processando...";
+
+    const leitor = new FileReader();
+    leitor.onerror = () => { info.textContent = "Não foi possível ler o arquivo."; };
+    leitor.onload = () => {
+      const img = new Image();
+      img.onerror = () => { info.textContent = "Arquivo de imagem inválido."; };
+      img.onload = () => {
+        const escala = Math.min(1, LADO_MAX / Math.max(img.width, img.height));
+        const l = Math.round(img.width * escala);
+        const a = Math.round(img.height * escala);
+
+        const tela = document.createElement("canvas");
+        tela.width = l; tela.height = a;
+        const ctx = tela.getContext("2d");
+        ctx.drawImage(img, 0, 0, l, a);
+
+        let saida = tela.toDataURL("image/png");
+        if (saida.length > LIMITE_PNG) {
+          /* fundo branco antes do JPEG: sem isso, o transparente vira
+             preto e a logo sai num quadrado escuro no papel */
+          ctx.globalCompositeOperation = "destination-over";
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, l, a);
+          saida = tela.toDataURL("image/jpeg", 0.9);
+        }
+
+        mostrarLogo(saida);
+        const kb = Math.round(saida.length / 1024);
+        info.textContent = `${l}×${a} px · ${kb} KB — clique em Salvar para gravar.`;
+      };
+      img.src = leitor.result;
+    };
+    leitor.readAsDataURL(arq);
+  }
+
+  /* ------------------------------------------------------------- */
+  async function salvar() {
+    const btn = document.getElementById("btn-salvar");
+    const msg = document.getElementById("msg");
+    const nome = document.getElementById("nome").value.trim();
+
+    if (!nome) {
+      aviso(msg, "O nome da oficina é obrigatório.", "erro");
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Salvando...";
+    aviso(msg, "");
+
+    const dados = { nome: nome, logo: logoAtual };
+    for (const c of ["documento","telefone","email","endereco",
+                     "cidade","uf","cep","rodape_os"]) {
+      dados[c] = document.getElementById(c).value.trim() || null;
+    }
+
+    try {
+      await Banco.atualizar("oficinas", contexto.oficina_id, dados);
+      aviso(msg, "Salvo.", "ok");
+      setTimeout(() => aviso(msg, ""), 2500);
+      document.getElementById("logo-info").textContent = "";
+    } catch (e) {
+      aviso(msg, e.message || "Não foi possível salvar.", "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salvar";
+    }
+  }
+</script>
+</body>
+</html>

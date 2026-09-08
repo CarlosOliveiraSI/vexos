@@ -34,6 +34,9 @@
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap;">
       <a class="btn-linha btn" href="ordens.html">Voltar</a>
+      <button class="btn-linha btn" id="btn-imprimir" onclick="imprimirOS()">
+        Imprimir / PDF
+      </button>
       <button class="btn" id="btn-salvar" onclick="salvar()">Salvar</button>
     </div>
   </div>
@@ -145,6 +148,10 @@
   </div>
 </div>
 
+<!-- Via impressa: montada na hora de imprimir e escondida na tela.
+     O CSS de impressão esconde o resto da página e mostra só isto. -->
+<div id="impressao" aria-hidden="true"></div>
+
 <script src="app.js"></script>
 <script>
   let contexto = null;
@@ -195,6 +202,8 @@
       const o = r && r[0];
       if (!o) { aviso(document.getElementById("msg"), "Ordem não encontrada.", "erro"); return; }
 
+      osNumero = o.numero;
+      osAbertaEm = o.aberta_em;
       document.getElementById("titulo").textContent = "Ordem " + o.numero;
       document.getElementById("subtitulo").textContent =
         "Aberta em " + dataBR(o.aberta_em);
@@ -431,6 +440,8 @@
       } else {
         const o = await Banco.criar("ordens_servico", dadosOS);
         osId = o.id;
+        osNumero = o.numero;
+        osAbertaEm = o.aberta_em || new Date().toISOString();
         document.getElementById("titulo").textContent = "Ordem " + o.numero;
         history.replaceState(null, "", "ordem.html?id=" + o.id);
       }
@@ -468,6 +479,172 @@
       btn.disabled = false;
       btn.textContent = "Salvar";
     }
+  }
+
+  /* ---------------------------------------------------------------
+     Via impressa da ordem de serviço
+
+     Impressão pelo navegador em vez de gerar PDF por biblioteca: o
+     VexOS é estático, sem etapa de build, e o "Salvar como PDF" do
+     próprio navegador já entrega o arquivo — inclusive no celular.
+     O layout é HTML comum, que dá para ajustar depois sem mexer em
+     API de PDF nenhuma.
+     --------------------------------------------------------------- */
+  let oficinaImpressao = null;   // cache: a logo é pesada, busca uma vez
+  let osNumero = null;
+  let osAbertaEm = null;
+
+  async function dadosOficina() {
+    if (oficinaImpressao) return oficinaImpressao;
+    const r = await Banco.listar("oficinas",
+      `id=eq.${contexto.oficina_id}&select=nome,documento,telefone,email,` +
+      `endereco,cidade,uf,cep,rodape_os,logo`);
+    oficinaImpressao = (r && r[0]) || {};
+    return oficinaImpressao;
+  }
+
+  async function imprimirOS() {
+    const msg = document.getElementById("msg");
+
+    /* Imprimir uma ordem não salva entregaria ao cliente um papel sem
+       número, que não existe no sistema — e é justamente o número que
+       ele vai citar quando ligar. */
+    if (!osId) {
+      aviso(msg, "Salve a ordem antes de imprimir.", "erro");
+      return;
+    }
+
+    const btn = document.getElementById("btn-imprimir");
+    btn.disabled = true;
+    const rotulo = btn.textContent;
+    btn.textContent = "Preparando...";
+
+    try {
+      const of = await dadosOficina();
+      document.getElementById("impressao").innerHTML = montarVia(of);
+
+      /* A logo em base64 já está no HTML, mas o navegador ainda precisa
+         decodificar. Sem esperar o decode, a janela de impressão pode
+         abrir com o espaço da imagem em branco. */
+      const img = document.querySelector("#impressao .via-logo");
+      if (img && !img.complete) {
+        await new Promise(ok => {
+          img.onload = ok;
+          img.onerror = ok;      // logo quebrada não impede de imprimir
+          setTimeout(ok, 1500);  // e nem trava a tela esperando
+        });
+      }
+      window.print();
+    } catch (e) {
+      aviso(msg, e.message || "Não foi possível preparar a impressão.", "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = rotulo;
+    }
+  }
+
+  function linhaVia(rotulo, valor) {
+    if (!valor) return "";
+    return `<div class="via-campo"><span>${esc(rotulo)}</span><b>${esc(valor)}</b></div>`;
+  }
+
+  function montarVia(of) {
+    const v = id => document.getElementById(id).value.trim();
+
+    const cidadeUf = [of.cidade, of.uf].filter(Boolean).join(" — ");
+    const endereco = [of.endereco, cidadeUf, of.cep].filter(Boolean).join(" · ");
+    const contato = [of.telefone, of.email].filter(Boolean).join(" · ");
+
+    const st = STATUS_OS[v("status")] || STATUS_OS.aberta;
+    const veiculo = [v("marca"), v("modelo"), v("ano")].filter(Boolean).join(" ");
+
+    /* itens: só as linhas preenchidas, e a coluna de valor aparece
+       apenas se alguém cobrou — oficina que usa a OS só como registro
+       não quer uma coluna de R$ vazia no papel do cliente */
+    const linhas = itens.filter(i => String(i.descricao || "").trim());
+    const temValor = linhas.some(i => i.valor_unit !== null &&
+                                      i.valor_unit !== "" &&
+                                      i.valor_unit !== undefined);
+    let total = 0;
+    let tabela = "";
+    if (linhas.length) {
+      tabela = `<table class="via-tabela">
+        <thead><tr>
+          <th>Serviços e peças</th>
+          <th class="num">Qtd</th>
+          ${temValor ? '<th class="num">Unit.</th><th class="num">Total</th>' : ""}
+        </tr></thead><tbody>`;
+      for (const it of linhas) {
+        const qtd = Number(it.quantidade || 0);
+        const unit = (it.valor_unit === null || it.valor_unit === "" ||
+                      it.valor_unit === undefined) ? null : Number(it.valor_unit);
+        const sub = unit === null ? null : qtd * unit;
+        if (sub) total += sub;
+        tabela += `<tr>
+          <td>${esc(it.descricao)}</td>
+          <td class="num">${esc(qtd % 1 === 0 ? qtd : qtd.toFixed(2))}</td>
+          ${temValor ? `<td class="num">${unit === null ? "—" : esc(dinheiro(unit))}</td>
+                        <td class="num">${sub === null ? "—" : esc(dinheiro(sub))}</td>` : ""}
+        </tr>`;
+      }
+      tabela += "</tbody></table>";
+      if (total > 0) {
+        tabela += `<div class="via-total">Total <b>${esc(dinheiro(total))}</b></div>`;
+      }
+    }
+
+    const bloco = (titulo, texto) => texto
+      ? `<div class="via-bloco"><h3>${esc(titulo)}</h3><p>${esc(texto)}</p></div>` : "";
+
+    return `
+      <div class="via-cabeca">
+        <div class="via-empresa">
+          ${of.logo ? `<img class="via-logo" src="${esc(of.logo)}" alt="">` : ""}
+          <div>
+            <div class="via-nome">${esc(of.nome || contexto.oficina || "")}</div>
+            ${of.documento ? `<div class="via-linha">${esc(of.documento)}</div>` : ""}
+            ${endereco ? `<div class="via-linha">${esc(endereco)}</div>` : ""}
+            ${contato ? `<div class="via-linha">${esc(contato)}</div>` : ""}
+          </div>
+        </div>
+        <div class="via-os">
+          <span>ORDEM DE SERVIÇO</span>
+          <b>${esc(osNumero !== null ? osNumero : "—")}</b>
+          <div class="via-linha">${esc(soData(osAbertaEm) || "")}</div>
+          <div class="via-linha">${esc(st.texto)}</div>
+        </div>
+      </div>
+
+      <div class="via-fichas">
+        <div class="via-ficha">
+          <h3>Cliente</h3>
+          ${linhaVia("Nome", v("cliente"))}
+          ${linhaVia("Telefone", v("telefone"))}
+        </div>
+        <div class="via-ficha">
+          <h3>Veículo</h3>
+          ${linhaVia("Placa", formatarPlaca(v("placa")))}
+          ${linhaVia("Veículo", veiculo)}
+          ${linhaVia("Motor", v("motor"))}
+          ${linhaVia("KM", v("km"))}
+        </div>
+      </div>
+
+      ${bloco("Relato do cliente", v("descricao"))}
+      ${bloco("Diagnóstico e serviço executado", v("diagnostico"))}
+      ${tabela}
+      ${bloco("Observações", v("observacoes"))}
+
+      ${of.rodape_os ? `<div class="via-rodape-texto">${esc(of.rodape_os)}</div>` : ""}
+
+      <div class="via-assinaturas">
+        <div><span></span>Responsável pela oficina</div>
+        <div><span></span>Cliente — ciente do serviço</div>
+      </div>
+
+      <div class="via-pe">
+        Emitida em ${esc(dataBR(new Date().toISOString()))} · VexOS
+      </div>`;
   }
 
   /* ---------------------------------------------------------------
