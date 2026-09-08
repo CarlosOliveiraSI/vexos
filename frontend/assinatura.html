@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Assinatura — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">ASSINATURA</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta" id="conta"></div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Assinatura</h1>
+      <div class="sub">Seus planos, vencimento e forma de pagamento.</div>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <!-- ---- o que a oficina tem hoje ---- -->
+  <div class="cartao" id="cartao-atual" style="display:none">
+    <div class="cartao-titulo">Situação atual</div>
+    <div id="atual"></div>
+  </div>
+
+  <!-- ---- vitrine ---- -->
+  <div class="cartao">
+    <div class="cartao-titulo">Planos</div>
+    <div id="planos"><div class="carregando"><span class="spinner"></span> Carregando...</div></div>
+  </div>
+
+  <!-- ---- últimos pagamentos ---- -->
+  <div class="cartao" id="cartao-pagamentos" style="display:none">
+    <div class="cartao-titulo">Últimos pagamentos</div>
+    <div id="pagamentos"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let planos = [];
+  let minhas = [];
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    montarMenuConta(contexto);
+    document.getElementById("pagina").style.display = "block";
+    carregar();
+  })();
+
+  const gestor = () => contexto &&
+    (contexto.papel === "dono" || contexto.papel === "admin");
+
+  async function carregar() {
+    try {
+      const [p, m] = await Promise.all([
+        Banco.listar("planos", "ativo=is.true&order=ordem"),
+        Banco.listar("minha_assinatura", "order=modulo"),
+      ]);
+      planos = p || [];
+      minhas = m || [];
+      desenharAtual();
+      desenharPlanos();
+      carregarPagamentos();
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+    }
+  }
+
+  /* -------------------------------------------------------------
+     Situação atual
+
+     Agrupa por PLANO, não por módulo: quem comprou o combo comprou
+     uma coisa só, e listar "vextron" e "vexos" em linhas separadas
+     faria parecer que ele paga dois.
+     ------------------------------------------------------------- */
+  function desenharAtual() {
+    const alvo = document.getElementById("atual");
+    if (!minhas.length) {
+      document.getElementById("cartao-atual").style.display = "none";
+      return;
+    }
+    document.getElementById("cartao-atual").style.display = "block";
+
+    const porPlano = {};
+    for (const a of minhas) {
+      const k = a.plano || a.modulo;
+      // guarda a linha de menor validade: é ela que vence primeiro e
+      // define quando o acesso cai
+      if (!porPlano[k] || (a.validade || "") < (porPlano[k].validade || ""))
+        porPlano[k] = a;
+    }
+
+    const ORIGEM = {
+      recorrente: "Cartão, renovação automática",
+      pix: "PIX — renovação manual",
+      manual: "Liberada pelo suporte",
+    };
+
+    let html = "";
+    for (const k of Object.keys(porPlano)) {
+      const a = porPlano[k];
+      const dias = a.dias_restantes;
+      let selo = "cancelada", texto = "Cancelada";
+      if (a.status === "ativa" && dias > 7)      { selo = "concluida"; texto = "Ativa"; }
+      else if (a.status === "ativa")             { selo = "andamento"; texto = "Vence em " + dias + " dia(s)"; }
+      else if (a.status === "pendente")          { selo = "aberta";    texto = "Aguardando pagamento"; }
+      else if (a.status === "vencida")           { selo = "cancelada"; texto = "Vencida"; }
+
+      html += `<div class="assin-linha">
+        <div>
+          <b>${esc(a.plano_nome || k)}</b>
+          <div class="sub">${esc(ORIGEM[a.origem] || "")}</div>
+        </div>
+        <div style="text-align:right">
+          <span class="selo ${selo}">${esc(texto)}</span>
+          ${a.validade ? `<div class="sub">até ${esc(soData(a.validade))}</div>` : ""}
+        </div>
+      </div>`;
+    }
+    alvo.innerHTML = html;
+  }
+
+  /* -------------------------------------------------------------
+     Vitrine
+     ------------------------------------------------------------- */
+  function moduloAtivo(m) {
+    return minhas.some(a => a.modulo === m && a.status === "ativa");
+  }
+
+  function desenharPlanos() {
+    const alvo = document.getElementById("planos");
+    if (!planos.length) {
+      alvo.innerHTML = '<div class="vazio" style="padding:24px">'
+                     + 'Nenhum plano disponível no momento.</div>';
+      return;
+    }
+
+    let html = '<div class="planos-grade">';
+    for (const p of planos) {
+      const mods = p.modulos || [];
+      const jaTem = mods.length && mods.every(moduloAtivo);
+      const parcial = !jaTem && mods.some(moduloAtivo);
+      const semPreco = !p.preco || Number(p.preco) <= 0;
+
+      html += `<div class="plano ${jaTem ? "plano-atual" : ""}">
+        <div class="plano-nome">${esc(p.nome)}</div>
+        <div class="plano-preco">${semPreco ? "—" :
+          esc(dinheiro(p.preco))}<span>/mês</span></div>
+        <div class="plano-desc">${esc(p.descricao || "")}</div>`;
+
+      if (jaTem) {
+        html += '<div class="plano-obs">Seu plano atual</div>';
+      } else if (semPreco) {
+        html += '<div class="plano-obs">Consulte o suporte</div>';
+      } else if (!gestor()) {
+        html += '<div class="plano-obs">Somente o dono pode contratar</div>';
+      } else {
+        if (parcial) {
+          html += '<div class="plano-obs">Upgrade — a assinatura atual '
+                + 'é cancelada automaticamente</div>';
+        }
+        html += `<button class="btn" data-assinar="${esc(p.codigo)}"
+                   data-forma="recorrente">Assinar no cartão</button>
+                 <button class="btn-linha btn" data-assinar="${esc(p.codigo)}"
+                   data-forma="pix">Pagar com PIX</button>`;
+      }
+      html += "</div>";
+    }
+    alvo.innerHTML = html + "</div>";
+
+    alvo.querySelectorAll("[data-assinar]").forEach(b =>
+      b.addEventListener("click", () =>
+        assinar(b.dataset.assinar, b.dataset.forma, b)));
+  }
+
+  /* -------------------------------------------------------------
+     Contratar
+     ------------------------------------------------------------- */
+  async function assinar(plano, forma, botao) {
+    const msg = document.getElementById("msg");
+    aviso(msg, "");
+    const rotulo = botao.textContent;
+    botao.disabled = true;
+    botao.textContent = "Gerando...";
+
+    try {
+      const token = await Sessao.token();
+      const r = await fetch("/api/assinar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json",
+                   Authorization: "Bearer " + token },
+        body: JSON.stringify({ plano: plano, forma: forma }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || "Não foi possível continuar.");
+
+      if (d.forma === "recorrente") {
+        /* Sai do site para o Mercado Pago cadastrar o cartão. Abrir em
+           aba nova em vez de trocar a página: se o cliente desistir,
+           ele volta para cá em vez de ficar perdido. */
+        if (d.link) window.open(d.link, "_blank");
+        aviso(msg, "Abrimos o Mercado Pago em outra aba. Depois de "
+                 + "cadastrar o cartão, volte aqui e atualize a página.", "info");
+      } else {
+        mostrarPix(d);
+      }
+    } catch (e) {
+      aviso(msg, e.message, "erro");
+    } finally {
+      botao.disabled = false;
+      botao.textContent = rotulo;
+    }
+  }
+
+  /* -------------------------------------------------------------
+     PIX
+
+     A liberação NÃO acontece aqui: quem libera é o webhook, quando o
+     Mercado Pago confirma. Por isso a tela avisa para aguardar em vez
+     de dizer "pronto" — dizer que liberou antes de o dinheiro cair é
+     o caminho mais curto para suporte.
+     ------------------------------------------------------------- */
+  function mostrarPix(d) {
+    const anterior = document.getElementById("modal-pix");
+    if (anterior) anterior.remove();
+
+    const fundo = document.createElement("div");
+    fundo.className = "modal-fundo";
+    fundo.id = "modal-pix";
+    fundo.innerHTML = `
+      <div class="modal" style="width:min(420px,100%); text-align:center">
+        <h2>${esc(d.nome)}</h2>
+        <div class="sub">${esc(dinheiro(d.preco))} — 30 dias de acesso</div>
+        ${d.qr_base64 ? `<img class="pix-qr" alt="QR Code PIX"
+             src="data:image/png;base64,${esc(d.qr_base64)}">` : ""}
+        <div class="pix-codigo" id="pix-codigo">${esc(d.copia_e_cola || "")}</div>
+        <button class="btn-mini" id="pix-copiar" style="margin-bottom:16px">
+          Copiar código
+        </button>
+        <p class="sub" style="margin-bottom:18px">
+          Depois de pagar, a liberação é automática e leva alguns
+          segundos. Atualize esta página para conferir.
+        </p>
+        <div class="modal-acoes" style="justify-content:center">
+          <button class="btn" id="pix-fechar">Fechar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(fundo);
+
+    const fechar = () => fundo.remove();
+    document.getElementById("pix-fechar").addEventListener("click", fechar);
+    fundo.addEventListener("click", e => { if (e.target === fundo) fechar(); });
+
+    document.getElementById("pix-copiar").addEventListener("click", async () => {
+      const btn = document.getElementById("pix-copiar");
+      try {
+        await navigator.clipboard.writeText(d.copia_e_cola || "");
+        btn.textContent = "Copiado";
+      } catch (e) {
+        /* clipboard bloqueado (http, permissão): seleciona o texto
+           para o cliente copiar no braço, em vez de não fazer nada */
+        const alvo = document.getElementById("pix-codigo");
+        const faixa = document.createRange();
+        faixa.selectNodeContents(alvo);
+        const sel = window.getSelection();
+        sel.removeAllRanges(); sel.addRange(faixa);
+        btn.textContent = "Selecionado — use Ctrl+C";
+      }
+      setTimeout(() => { btn.textContent = "Copiar código"; }, 2500);
+    });
+  }
+
+  /* -------------------------------------------------------------
+     Histórico
+     ------------------------------------------------------------- */
+  async function carregarPagamentos() {
+    if (!gestor()) return;
+    try {
+      const lista = await Banco.listar("pagamentos",
+        "order=recebido_em.desc&limit=12");
+      if (!lista || !lista.length) return;
+
+      document.getElementById("cartao-pagamentos").style.display = "block";
+      const ROTULO = { approved: "Aprovado", rejected: "Recusado",
+                       pending: "Pendente", in_process: "Em análise",
+                       cancelled: "Cancelado", refunded: "Estornado" };
+      const COR = { approved: "concluida", rejected: "cancelada",
+                    pending: "andamento", in_process: "andamento",
+                    cancelled: "cancelada", refunded: "cancelada" };
+
+      let html = '<table class="tabela"><thead><tr>'
+        + '<th style="width:130px">Data</th><th>Plano</th>'
+        + '<th class="esconde-cel">Forma</th>'
+        + '<th style="width:110px">Valor</th>'
+        + '<th style="width:110px">Situação</th></tr></thead><tbody>';
+      for (const p of lista) {
+        html += `<tr style="cursor:default">
+          <td style="color:var(--texto-sec)">${esc(dataBR(p.recebido_em))}</td>
+          <td>${esc(p.plano || "—")}</td>
+          <td class="esconde-cel" style="color:var(--texto-sec)">${
+            p.tipo === "recorrente" ? "Cartão" : "PIX"}</td>
+          <td>${esc(dinheiro(p.valor))}</td>
+          <td><span class="selo ${COR[p.status] || "cancelada"}">${
+            esc(ROTULO[p.status] || p.status || "—")}</span></td>
+        </tr>`;
+      }
+      document.getElementById("pagamentos").innerHTML = html + "</tbody></table>";
+    } catch (e) { /* sem histórico, o cartão fica escondido */ }
+  }
+</script>
+</body>
+</html>

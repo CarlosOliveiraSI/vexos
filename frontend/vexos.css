@@ -463,3 +463,45 @@ h1{font-size:24px; font-weight:800; letter-spacing:-.3px;}
     font-size:8pt; color:#666; text-align:center;
   }
 }
+
+/* =====================================================================
+   Tela de assinatura
+   ===================================================================== */
+.assin-linha{
+  display:flex; justify-content:space-between; align-items:center;
+  gap:14px; padding:13px 0; border-bottom:1px solid var(--borda);
+}
+.assin-linha:last-child{border-bottom:0;}
+
+.planos-grade{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+.plano{
+  background:var(--fundo); border:1px solid var(--borda);
+  border-radius:var(--r-lg); padding:20px; display:flex;
+  flex-direction:column; gap:10px;
+}
+/* O plano contratado ganha a borda laranja: o cliente precisa achar
+   o dele de relance, sem ler os três. */
+.plano-atual{border-color:var(--laranja); background:var(--laranja-fundo);}
+.plano-nome{font-weight:700; font-size:15px;}
+.plano-preco{font-size:26px; font-weight:800; line-height:1;}
+.plano-preco span{font-size:12.5px; font-weight:500; color:var(--texto-sec);}
+.plano-desc{font-size:13px; color:var(--texto-sec); flex:1;}
+.plano-obs{font-size:12.5px; color:var(--laranja-claro);}
+.plano .btn, .plano .btn-linha{width:100%;}
+
+.pix-qr{
+  width:200px; height:200px; margin:14px auto 12px; display:block;
+  /* fundo branco fixo: o QR vem com transparência e some no tema
+     escuro — o cliente aponta a câmera para um quadrado preto */
+  background:#fff; padding:8px; border-radius:8px;
+}
+.pix-codigo{
+  font-family:Consolas,monospace; font-size:11px; word-break:break-all;
+  background:var(--fundo); border:1px solid var(--borda);
+  border-radius:var(--r); padding:10px; margin-bottom:10px;
+  max-height:90px; overflow-y:auto; text-align:left; user-select:all;
+}
+
+@media (max-width:760px){
+  .planos-grade{grid-template-columns:1fr;}
+}
