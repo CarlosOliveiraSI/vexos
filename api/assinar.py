@@ -206,6 +206,14 @@ def _cancelar_preapproval(preapproval_id):
     _mp("/preapproval/%s" % preapproval_id, {"status": "cancelled"}, "PUT")
 
 
+def email_pagador_valido(email):
+    """Formato de e-mail. Quem valida a conta de verdade é o Mercado Pago."""
+    if not email or email.count("@") != 1 or " " in email:
+        return False
+    local, _, dominio = email.partition("@")
+    return bool(local) and "." in dominio and not dominio.endswith(".")
+
+
 # ---------------------------------------------------------------------
 # Regras de negócio
 # ---------------------------------------------------------------------
@@ -398,11 +406,25 @@ def tratar(handler):
         return erro(409, "Você já tem esse plano ativo.")
 
     oficina = _oficina(oficina_id) or {}
-    # E-mail do pagador: o da oficina, se cadastrado; senão o do login.
-    email = (oficina.get("email") or email_login or "").strip()
-    if not email or "@" not in email:
-        return erro(400, "Cadastre um e-mail válido em Dados da oficina "
-                         "antes de assinar.")
+
+    # E-mail do PAGADOR — informado na hora de assinar.
+    #
+    # Antes eu reaproveitava o e-mail da oficina. São coisas diferentes:
+    # aquele é o contato que sai no rodapé da OS impressa; este é a
+    # CONTA DO MERCADO PAGO que vai pagar. A oficina pode ter
+    # contato@oficina.com.br no papel timbrado e pagar com a conta
+    # pessoal do dono. Quando não batia, o Mercado Pago recusava com
+    # "Seu e-mail não corresponde ao da assinatura" e o cliente não
+    # tinha como entender por quê.
+    email = (dados.get("email") or "").strip().lower()
+    if not email:
+        # Sem nada informado, a sugestão da tela é o e-mail da oficina —
+        # mas nunca o e-mail de login, que quase nunca é uma conta do
+        # Mercado Pago e produzia exatamente aquela recusa.
+        email = (oficina.get("email") or "").strip().lower()
+    if not email_pagador_valido(email):
+        return erro(400, "Informe o e-mail da conta do Mercado Pago que "
+                         "vai pagar a assinatura.")
 
     if forma == "recorrente":
         # Upgrade: cancela a recorrência antiga ANTES de criar a nova,
@@ -417,6 +439,7 @@ def tratar(handler):
     if msg:
         return erro(502, msg)
 
+    saida["email"] = email
     saida["plano"] = plano["codigo"]
     saida["nome"] = plano["nome"]
     saida["preco"] = float(plano["preco"])

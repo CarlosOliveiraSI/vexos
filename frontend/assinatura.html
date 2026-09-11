@@ -60,6 +60,7 @@
   let contexto = null;
   let planos = [];
   let minhas = [];
+  let emailSugerido = "";
 
   (async function () {
     contexto = await exigirSessao();
@@ -74,12 +75,15 @@
 
   async function carregar() {
     try {
-      const [p, m] = await Promise.all([
+      const [p, m, of] = await Promise.all([
         Banco.listar("planos", "ativo=is.true&order=ordem"),
         Banco.listar("minha_assinatura", "order=modulo"),
+        Banco.listar("oficinas",
+          `id=eq.${contexto.oficina_id}&select=email`),
       ]);
       planos = p || [];
       minhas = m || [];
+      emailSugerido = (of && of[0] && of[0].email) || "";
       desenharAtual();
       desenharPlanos();
       carregarPagamentos();
@@ -212,9 +216,74 @@
   /* -------------------------------------------------------------
      Contratar
      ------------------------------------------------------------- */
+  /* Pergunta a conta do Mercado Pago que vai pagar.
+
+     O Mercado Pago amarra a assinatura a este e-mail e recusa quem
+     entrar no checkout com outra conta. Enquanto a tela adivinhava
+     (usava o e-mail da oficina, ou o do login), o cliente batia em
+     "Seu e-mail não corresponde ao da assinatura" sem ter como saber
+     qual endereço o sistema tinha mandado. */
+  function pedirEmail(nomePlano, forma) {
+    return new Promise(resolve => {
+      const fundo = document.createElement("div");
+      fundo.className = "modal-fundo";
+      fundo.innerHTML = `
+        <div class="modal" style="width:min(440px,100%)">
+          <h2>${esc(nomePlano)}</h2>
+          <div class="sub" style="margin-bottom:16px">
+            ${forma === "recorrente"
+              ? "Informe o e-mail da sua conta do Mercado Pago. É com ela "
+              + "que você vai entrar para cadastrar o cartão."
+              : "Informe seu e-mail para receber o comprovante do PIX."}
+          </div>
+          <div class="campo">
+            <label for="pg-email">E-mail</label>
+            <input id="pg-email" type="email" autocomplete="email"
+                   placeholder="voce@email.com">
+          </div>
+          <div class="modal-acoes">
+            <button class="btn-secundario" data-r="0">Cancelar</button>
+            <button class="btn" data-r="1">Continuar</button>
+          </div>
+        </div>`;
+      const fechar = v => { document.removeEventListener("keydown", tecla);
+                            fundo.remove(); resolve(v); };
+      const valor = () =>
+        (document.getElementById("pg-email").value || "").trim().toLowerCase();
+      const confirmar = () => {
+        const e = valor();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+          aviso(document.getElementById("msg"),
+                "Informe um e-mail válido.", "erro");
+          return;
+        }
+        fechar(e);
+      };
+      const tecla = ev => {
+        if (ev.key === "Escape") fechar(null);
+        if (ev.key === "Enter") confirmar();
+      };
+      fundo.addEventListener("click", ev => {
+        const b = ev.target.closest("[data-r]");
+        if (b) { b.dataset.r === "1" ? confirmar() : fechar(null); }
+        else if (ev.target === fundo) fechar(null);
+      });
+      document.addEventListener("keydown", tecla);
+      document.body.appendChild(fundo);
+      const campo = document.getElementById("pg-email");
+      campo.value = emailSugerido;   // sugestão, não imposição
+      campo.focus();
+      campo.select();
+    });
+  }
+
   async function assinar(plano, forma, botao) {
     const msg = document.getElementById("msg");
     aviso(msg, "");
+
+    const nome = (planos.find(p => p.codigo === plano) || {}).nome || plano;
+    const email = await pedirEmail(nome, forma);
+    if (!email) return;              // cancelou
     const rotulo = botao.textContent;
     botao.disabled = true;
     botao.textContent = "Gerando...";
@@ -225,7 +294,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json",
                    Authorization: "Bearer " + token },
-        body: JSON.stringify({ plano: plano, forma: forma }),
+        body: JSON.stringify({ plano: plano, forma: forma, email: email }),
       });
       /* Ler como texto primeiro: quando a função quebra ou a rota não
          existe, a Vercel devolve HTML, o r.json() estoura e o erro real
