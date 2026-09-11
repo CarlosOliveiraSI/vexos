@@ -209,12 +209,24 @@ def _cancelar_preapproval(preapproval_id):
 # ---------------------------------------------------------------------
 # Regras de negócio
 # ---------------------------------------------------------------------
+def ja_contratado(assinaturas, codigo_plano):
+    """
+    A oficina já PAGA este plano?
+
+    Pergunta diferente de "os módulos dele estão cobertos". Quem paga
+    Vextron e VexOS separados tem os dois módulos ativos, mas não
+    assinou o combo — e trocar os avulsos pelo pacote é uma contratação
+    legítima, geralmente mais barata. Confundir as duas coisas bloqueia
+    justamente o upgrade que interessa vender.
+    """
+    return any(a.get("plano") == codigo_plano and a.get("status") == "ativa"
+               for a in assinaturas)
+
+
 def conflitos(assinaturas, modulos_novos):
     """
     Módulos que a oficina JÁ tem ativos e que o plano novo repetiria.
-
-    Existe para o cliente do combo não assinar o VexOS avulso por
-    cima e pagar duas vezes pela mesma coisa.
+    Usado só para saber o que precisa ser cancelado na troca.
     """
     ativos = {a["modulo"]: a for a in assinaturas
               if a.get("status") == "ativa"}
@@ -232,6 +244,7 @@ def preapprovals_a_cancelar(assinaturas, modulos_novos):
     ids = set()
     for a in assinaturas:
         if (a.get("modulo") in modulos_novos
+                and a.get("plano") != None
                 and a.get("origem") == "recorrente"
                 and a.get("mp_preapproval_id")
                 and a.get("status") in ("ativa", "pendente")):
@@ -384,10 +397,10 @@ def tratar(handler):
     if atuais is None:
         return erro(500, "Não foi possível ler sua assinatura atual.")
 
-    # Bloqueia recontratar o que já está ativo, EXCETO quando o plano
-    # novo é maior — aí é upgrade, e o passo seguinte cuida do resto.
-    repetidos = conflitos(atuais, plano["modulos"])
-    if repetidos and len(plano["modulos"]) <= len(repetidos):
+    # Bloqueia só recontratar o MESMO plano. Trocar dois avulsos pelo
+    # combo continua permitido — o cancelamento das assinaturas antigas
+    # acontece logo abaixo.
+    if ja_contratado(atuais, plano["codigo"]):
         return erro(409, "Você já tem esse plano ativo.")
 
     oficina = _oficina(oficina_id) or {}

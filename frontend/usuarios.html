@@ -87,10 +87,8 @@
     </div>
     <div class="campo">
       <label for="f-email">E-mail (login)</label>
-      <div class="email-dominio">
-        <input id="f-email" placeholder="pedro" autocomplete="off">
-        <span>@motronixtech.com.br</span>
-      </div>
+      <input id="f-email" type="email" placeholder="pedro@suaoficina.com.br"
+             autocomplete="off">
     </div>
     <div class="linha-campos c2">
       <div class="campo">
@@ -274,9 +272,7 @@
     document.getElementById("modal-titulo").textContent = "Editar usuário";
     document.getElementById("modal-sub").textContent = "Altere o que precisar. A senha só muda se você preencher.";
     document.getElementById("f-nome").value = u.nome || "";
-    // email: mostra só a parte antes do @, domínio fixo
-    const usuario = (u.email || "").split("@")[0];
-    document.getElementById("f-email").value = usuario;
+    document.getElementById("f-email").value = u.email || "";
     document.getElementById("f-email").disabled = false;
     document.getElementById("f-senha").value = "";
     document.getElementById("f-senha").placeholder = "deixe em branco para manter";
@@ -298,10 +294,13 @@
     const papel = papelEscolhido;
 
     if (!nome) { aviso(mm, "Informe o nome.", "erro"); return; }
-    if (!usuario || !/^[a-z0-9._-]+$/.test(usuario)) {
-      aviso(mm, "Informe o usuário (só letras, números, ponto ou hífen).", "erro"); return;
+    /* E-mail completo, sem domínio fixo: a oficina que assina sozinha
+       cadastra funcionário com o e-mail dele, que nunca vai ser do
+       domínio da Motronix. A validação de verdade está no servidor. */
+    const email = (usuario || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      aviso(mm, "Informe um e-mail válido.", "erro"); return;
     }
-    const email = usuario + "@motronixtech.com.br";
     const btn = document.getElementById("btn-salvar");
     const token = await Sessao.token();
 

@@ -217,6 +217,23 @@ def _perfil_alvo(id_alvo):
     return linhas[0] if linhas else None
 
 
+def _conta_donos(oficina_id):
+    """Quantos donos ATIVOS a oficina tem. 0 em falha de leitura."""
+    url = (f"{SUPABASE_URL}/rest/v1/perfis"
+           f"?oficina_id=eq.{oficina_id}&papel=eq.dono&ativo=is.true"
+           f"&select=id")
+    req = urllib.request.Request(url, headers={
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return len(json.loads(r.read().decode("utf-8")) or [])
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            ValueError, OSError):
+        return 0
+
+
 def _atualizar_perfil(id_alvo, campos):
     """Atualiza nome/papel na tabela perfis. bool de sucesso."""
     if not campos:
@@ -259,6 +276,25 @@ def _atualizar_login(id_alvo, campos):
         return False
 
 
+def email_valido(email):
+    """
+    Formato de e-mail, sem restrição de domínio.
+
+    Antes isto exigia @motronixtech.com.br. Fazia sentido enquanto você
+    criava as contas na mão, mas trava o modelo de auto-cadastro: a
+    oficina que assina sozinha não consegue cadastrar o próprio
+    funcionário, porque o e-mail dele nunca é do seu domínio.
+    """
+    if not email or email.count("@") != 1:
+        return False
+    local, _, dominio = email.partition("@")
+    if not local or "." not in dominio:
+        return False
+    if dominio.startswith(".") or dominio.endswith("."):
+        return False
+    return " " not in email and len(email) <= 254
+
+
 def _validar_entrada(dados):
     """Devolve (limpo, None) ou (None, mensagem de erro)."""
     email = (dados.get("email") or "").strip().lower()
@@ -266,12 +302,8 @@ def _validar_entrada(dados):
     nome = (dados.get("nome") or "").strip()
     papel = (dados.get("papel") or "").strip()
 
-    if not email or "@" not in email:
+    if not email_valido(email):
         return None, "Informe um e-mail válido."
-    # o cadastro comercial usa só o domínio da empresa — trava aqui
-    # também, não só na tela (defesa no servidor).
-    if not email.endswith("@motronixtech.com.br"):
-        return None, "O e-mail deve ser do domínio @motronixtech.com.br."
     if len(senha) < 6:
         return None, "A senha precisa ter ao menos 6 caracteres."
     if not nome:
@@ -353,6 +385,22 @@ def tratar_editar(handler):
     if not alvo or alvo.get("oficina_id") != oficina_gestor:
         return erro(403, "Usuário não pertence à sua oficina.")
 
+    papel_novo = (dados.get("papel") or "").strip() if "papel" in dados else None
+
+    # Ninguém muda o próprio papel. Sem isto, um admin se promove a dono
+    # com um PATCH no próprio id — e o dono se rebaixa por engano e
+    # perde o acesso às telas de gestão, sem ninguém para desfazer.
+    if papel_novo and id_alvo == id_gestor and papel_novo != alvo.get("papel"):
+        return erro(403, "Você não pode alterar o seu próprio papel.")
+
+    # A oficina não pode ficar sem dono: é o papel que controla
+    # assinatura, usuários e dados da empresa. Rebaixar o último deixa a
+    # conta órfã, e destravar exige mexer no banco por fora.
+    if (papel_novo and alvo.get("papel") == "dono" and papel_novo != "dono"
+            and _conta_donos(oficina_gestor) <= 1):
+        return erro(409, "Esta é a única conta de dono da oficina. "
+                         "Promova outro usuário a dono antes de mudar este.")
+
     # ---- monta as mudanças, validando cada campo enviado ----
     perfil_campos = {}
     login_campos = {}
@@ -371,8 +419,8 @@ def tratar_editar(handler):
 
     if "email" in dados and (dados.get("email") or "").strip():
         email = dados["email"].strip().lower()
-        if "@" not in email or not email.endswith("@motronixtech.com.br"):
-            return erro(400, "O e-mail deve ser do domínio @motronixtech.com.br.")
+        if not email_valido(email):
+            return erro(400, "Informe um e-mail válido.")
         login_campos["email"] = email
         perfil_campos["email"] = email   # mantém a cópia em perfis em dia
 
