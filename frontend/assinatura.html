@@ -149,6 +149,14 @@
     return minhas.some(a => a.modulo === m && a.status === "ativa");
   }
 
+  /* "Seu plano atual" é sobre O PLANO CONTRATADO, não sobre cobertura
+     de módulos. Quem paga Vextron e VexOS separados TEM os dois módulos
+     ativos — mas não assinou o combo, e precisa continuar enxergando a
+     oferta dele, que sai mais barato que os dois avulsos. */
+  function planoContratado(codigo) {
+    return minhas.some(a => a.plano === codigo && a.status === "ativa");
+  }
+
   function desenharPlanos() {
     const alvo = document.getElementById("planos");
     if (!planos.length) {
@@ -160,7 +168,7 @@
     let html = '<div class="planos-grade">';
     for (const p of planos) {
       const mods = p.modulos || [];
-      const jaTem = mods.length && mods.every(moduloAtivo);
+      const jaTem = planoContratado(p.codigo);
       const parcial = !jaTem && mods.some(moduloAtivo);
       const semPreco = !p.preco || Number(p.preco) <= 0;
 
@@ -178,8 +186,14 @@
         html += '<div class="plano-obs">Somente o dono pode contratar</div>';
       } else {
         if (parcial) {
-          html += '<div class="plano-obs">Upgrade — a assinatura atual '
-                + 'é cancelada automaticamente</div>';
+          const cobertos = mods.filter(moduloAtivo).length;
+          html += '<div class="plano-obs">'
+                + (cobertos === mods.length
+                    ? "Troca os planos avulsos por este — os anteriores "
+                    + "são cancelados automaticamente"
+                    : "Upgrade — a assinatura atual é cancelada "
+                    + "automaticamente")
+                + "</div>";
         }
         html += `<button class="btn" data-assinar="${esc(p.codigo)}"
                    data-forma="recorrente">Assinar no cartão</button>
@@ -213,8 +227,22 @@
                    Authorization: "Bearer " + token },
         body: JSON.stringify({ plano: plano, forma: forma }),
       });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.erro || "Não foi possível continuar.");
+      /* Ler como texto primeiro: quando a função quebra ou a rota não
+         existe, a Vercel devolve HTML, o r.json() estoura e o erro real
+         some atrás de uma mensagem genérica. */
+      const bruto = await r.text();
+      let d = {};
+      try { d = JSON.parse(bruto); } catch (_) { d = {}; }
+
+      if (!r.ok) {
+        if (d.erro) throw new Error(d.erro);
+        if (r.status === 404)
+          throw new Error("Rota /api/assinar não encontrada — confira se o "
+                        + "arquivo está em api/ e se o deploy terminou.");
+        throw new Error("Erro " + r.status + " em /api/assinar. "
+                      + (bruto.slice(0, 140) || "Sem resposta.")
+                      + " — veja os logs da Vercel.");
+      }
 
       if (d.forma === "recorrente") {
         /* Sai do site para o Mercado Pago cadastrar o cartão. Abrir em
