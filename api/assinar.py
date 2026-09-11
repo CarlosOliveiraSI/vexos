@@ -235,47 +235,41 @@ def conflitos(assinaturas, modulos_novos):
 
 def preapprovals_a_cancelar(assinaturas, modulos_novos):
     """
-    Assinaturas recorrentes que ficam órfãs com o plano novo.
+    Assinaturas recorrentes ATIVAS que ficam órfãs com o plano novo.
 
-    Quem tem o Vextron avulso e sobe para o combo não pode continuar
-    pagando as duas: a preapproval antiga precisa ser cancelada no
-    Mercado Pago, senão o cartão é debitado duas vezes por mês.
+    Quem paga o Vextron no cartão e sobe para o combo não pode continuar
+    pagando as duas: a preapproval antiga é cancelada no Mercado Pago,
+    senão o cartão é debitado duas vezes por mês.
+
+    Só considera linha ATIVA com origem recorrente — ou seja, algo que
+    de fato já foi pago. Intenção não paga não tem o que cancelar aqui;
+    ela nem aparece mais nesta tabela.
     """
     ids = set()
     for a in assinaturas:
         if (a.get("modulo") in modulos_novos
-                and a.get("plano") != None
                 and a.get("origem") == "recorrente"
-                and a.get("mp_preapproval_id")
-                and a.get("status") in ("ativa", "pendente")):
+                and a.get("status") == "ativa"
+                and a.get("mp_preapproval_id")):
             ids.add(a["mp_preapproval_id"])
     return list(ids)
 
 
-def marcar_pendente(oficina_id, plano, modulos, preapproval_id):
+def registrar_preapproval(mp_id, oficina_id, plano):
     """
-    Grava a preapproval ANTES do primeiro pagamento.
+    Grava o vínculo preapproval -> (oficina, plano) ANTES do primeiro
+    pagamento. Sem ele, a cobrança mensal chega no webhook sem
+    external_reference e não há como saber de quem é.
 
-    Sem isto o webhook recebe a cobrança mensal e não sabe de quem é:
-    a cobrança recorrente não carrega external_reference, só o vínculo
-    com a preapproval. É esta linha que faz a ligação.
-
-    Não mexe em validade nem em status 'ativa' — quem ativa é o
-    pagamento aprovado, no webhook.
+    Vai para a tabela `preapprovals`, NUNCA para `assinaturas`. A versão
+    anterior escrevia em `assinaturas` e sobrescrevia plano e origem de
+    linhas já pagas — uma intenção de compra alterava um direito já
+    adquirido. `assinaturas` agora só é escrita por pagamento aprovado.
     """
-    linhas = [{
-        "oficina_id": oficina_id,
-        "modulo": m,
-        "plano": plano,
-        "origem": "recorrente",
-        "mp_preapproval_id": preapproval_id,
-    } for m in modulos]
-
-    # merge-duplicates: se já existe linha para (oficina, módulo), o
-    # upsert atualiza em vez de estourar a restrição de unicidade.
     return _supabase(
-        "/rest/v1/assinaturas?on_conflict=oficina_id,modulo",
-        "POST", linhas,
+        "/rest/v1/preapprovals?on_conflict=mp_id",
+        "POST",
+        [{"mp_id": mp_id, "oficina_id": oficina_id, "plano": plano}],
         prefer="resolution=merge-duplicates,return=minimal")
 
 
@@ -312,8 +306,8 @@ def criar_recorrente(oficina_id, plano, email, nome_oficina):
     if not preapproval_id:
         return None, "O Mercado Pago não devolveu a assinatura."
 
-    if marcar_pendente(oficina_id, plano["codigo"],
-                       plano["modulos"], preapproval_id) is None:
+    if registrar_preapproval(preapproval_id, oficina_id,
+                             plano["codigo"]) is None:
         # A preapproval existe lá e não foi registrada aqui: cancelar é
         # melhor do que deixar uma cobrança que o webhook nunca vai
         # saber creditar.

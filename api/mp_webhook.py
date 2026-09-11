@@ -230,6 +230,13 @@ def assinatura_por_preapproval(preapproval_id):
     pagamento RECORRENTE: a cobrança mensal não carrega o
     external_reference, só o vínculo com a assinatura.
     """
+    r = _supabase("/rest/v1/preapprovals?mp_id=eq."
+                  + urllib.parse.quote(preapproval_id)
+                  + "&select=oficina_id,plano&limit=1")
+    if r:
+        return r[0]
+    # Compatibilidade: preapprovals criadas antes da tabela existir
+    # ficaram vinculadas dentro de `assinaturas`.
     r = _supabase("/rest/v1/assinaturas?mp_preapproval_id=eq."
                   + urllib.parse.quote(preapproval_id)
                   + "&select=oficina_id,plano&limit=1")
