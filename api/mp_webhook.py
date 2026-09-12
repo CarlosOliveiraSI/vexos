@@ -163,19 +163,32 @@ def assinatura_valida(handler, data_id):
 # 2. Consultas ao Mercado Pago
 # ---------------------------------------------------------------------
 def _mp_get(caminho):
-    """GET na API do Mercado Pago. Devolve dict, ou None em falha."""
+    """
+    GET na API do Mercado Pago. Devolve (dados, codigo).
+
+    O código HTTP importa para decidir a resposta ao webhook:
+
+      404  o recurso NÃO EXISTE. Pedir reenvio disso é pedir para o
+           Mercado Pago tentar a mesma coisa impossível para sempre —
+           é o que acontece com a notificação de teste do painel, que
+           usa id fictício. Vira 200 lá em cima.
+      5xx / timeout / rede
+           falha temporária. Aí sim 500, para ele reenviar.
+
+    codigo = 0 quando nem houve resposta HTTP (rede, timeout).
+    """
     req = urllib.request.Request(
         MP_API + caminho,
         headers={"Authorization": "Bearer " + MP_ACCESS_TOKEN})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            return json.loads(r.read().decode("utf-8"))
+            return json.loads(r.read().decode("utf-8")), r.status
     except urllib.error.HTTPError as e:
         log("MP", caminho, "HTTP", e.code)
-        return None
+        return None, e.code
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
         log("MP", caminho, "falhou:", e)
-        return None
+        return None, 0
 
 
 # ---------------------------------------------------------------------
@@ -277,8 +290,13 @@ def ler_referencia(texto):
 # ---------------------------------------------------------------------
 def tratar_pagamento(pagamento_id):
     """PIX avulso (e qualquer pagamento com external_reference nosso)."""
-    p = _mp_get("/v1/payments/%s" % pagamento_id)
+    p, codigo = _mp_get("/v1/payments/%s" % pagamento_id)
     if p is None:
+        if codigo in (401, 403, 404):
+            # Id que não existe (ou não é desta aplicação): reenviar não
+            # muda nada. 200 encerra o ciclo de retentativas.
+            log("pagamento", pagamento_id, "inacessível", codigo, "— encerrado")
+            return 200, "recurso inacessível"
         return 500, "Não foi possível consultar o pagamento."
 
     oficina_id, plano = ler_referencia(p.get("external_reference"))
@@ -294,15 +312,28 @@ def tratar_pagamento(pagamento_id):
         "status_detail": p.get("status_detail"),
         "transaction_amount": p.get("transaction_amount"),
         "payment_method_id": p.get("payment_method_id"),
+        "payment_type_id": p.get("payment_type_id"),
         "date_approved": p.get("date_approved"),
         "external_reference": p.get("external_reference"),
     }
 
-    r = aplicar(p.get("id"), oficina_id, plano, "pix",
+    # O meio de pagamento vem do próprio pagamento, não é assumido.
+    #
+    # O Mercado Pago notifica a PRIMEIRA cobrança de uma assinatura pelo
+    # evento `payment` também, não só por subscription_authorized_payment.
+    # Fixar "pix" aqui gravava a assinatura com origem errada: a tela
+    # dizia "PIX — renovação manual" para quem paga no cartão, e o
+    # cliente achava que precisava pagar de novo todo mês.
+    tipo = ("pix"
+            if (p.get("payment_method_id") or "pix") == "pix"
+            else "recorrente")
+
+    r = aplicar(p.get("id"), oficina_id, plano, tipo,
                 p.get("transaction_amount"), p.get("status"), None, resumo)
     if r is None:
         return 500, "Falha ao registrar o pagamento."
-    log("pagamento", pagamento_id, p.get("status"), "novo" if r else "repetido")
+    log("pagamento", pagamento_id, tipo, p.get("status"),
+        "novo" if r else "repetido")
     return 200, "ok"
 
 
@@ -311,8 +342,11 @@ def tratar_cobranca_assinatura(autorizado_id):
     Cobrança mensal gerada por uma assinatura recorrente.
     O recurso authorized_payment liga a preapproval ao pagamento real.
     """
-    a = _mp_get("/authorized_payments/%s" % autorizado_id)
+    a, codigo = _mp_get("/authorized_payments/%s" % autorizado_id)
     if a is None:
+        if codigo in (401, 403, 404):
+            log("cobrança", autorizado_id, "inacessível", codigo, "— encerrado")
+            return 200, "recurso inacessível"
         return 500, "Não foi possível consultar a cobrança."
 
     preapproval_id = a.get("preapproval_id")
@@ -357,8 +391,13 @@ def tratar_assinatura(preapproval_id):
     acesso que já pagou até vencer — tirar na hora seria cobrar por um
     serviço não prestado.
     """
-    a = _mp_get("/preapproval/%s" % preapproval_id)
+    a, codigo = _mp_get("/preapproval/%s" % preapproval_id)
     if a is None:
+        if codigo in (401, 403, 404):
+            # É por aqui que passa a notificação de teste do painel,
+            # que manda preapproval id 123456.
+            log("assinatura", preapproval_id, "inacessível", codigo, "— encerrado")
+            return 200, "recurso inacessível"
         return 500, "Não foi possível consultar a assinatura."
 
     estado = (a.get("status") or "").lower()
