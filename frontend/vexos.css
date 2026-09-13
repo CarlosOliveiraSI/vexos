@@ -150,6 +150,25 @@ a.conta-item{text-decoration:none; box-sizing:border-box;}
    Num campo de quantidade elas ocupam a ponta direita, roubam o clique
    de quem ia posicionar o cursor, e mudam o valor no scroll do mouse —
    dá para alterar um estoque sem perceber, só rolando a página. */
+/* Tabela de itens da nota: campos dentro das células precisam ocupar a
+   largura toda, senão a coluna fica com sobra à direita e o clique no
+   espaço vazio não foca o campo. */
+.tabela-itens input, .tabela-itens select{
+  width:100%; background:var(--fundo); color:var(--texto);
+  border:1px solid var(--borda); border-radius:var(--r);
+  padding:7px 9px; font-size:13px; font-family:inherit;
+}
+.tabela-itens input:focus{outline:none; border-color:var(--laranja);}
+.tabela-itens input:disabled{opacity:.7; cursor:default;}
+.tabela-itens td{vertical-align:middle;}
+
+.nota-total{
+  display:flex; align-items:center; justify-content:flex-end; gap:12px;
+  margin-top:16px; padding-top:14px; border-top:1px solid var(--borda);
+  font-size:14px; color:var(--texto-sec);
+}
+.nota-total b{font-size:19px; font-weight:800; color:var(--texto);}
+
 /* Saldo no formulário de edição: parece campo, mas é leitura — a
    quantidade só muda pela contagem ou por nota, nunca digitada aqui. */
 .saldo-fixo{

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Notas de compra — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">COMPRAS</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta" id="conta"></div>
+  </div>
+</header>
+
+<!-- ---------- lista ---------- -->
+<div class="pagina" id="tela-lista" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Notas de compra</h1>
+      <div class="sub" id="resumo"></div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <a class="btn-linha btn" href="pecas.html">Estoque</a>
+      <button class="btn" onclick="abrirNota(null)">+ Nova nota</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div class="cartao" style="padding:8px 12px;">
+    <div id="lista"><div class="carregando">Carregando...</div></div>
+  </div>
+</div>
+
+<!-- ---------- editor ---------- -->
+<div class="pagina" id="tela-nota" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1 id="nota-titulo">Nova nota</h1>
+      <div class="sub" id="nota-sub">Os itens entram no estoque quando você lançar.</div>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap">
+      <button class="btn-linha btn" onclick="voltar()">Voltar</button>
+      <button class="btn-linha btn" id="btn-salvar" onclick="salvar()">Salvar rascunho</button>
+      <button class="btn" id="btn-lancar" onclick="lancar()">Lançar no estoque</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg2"></div>
+
+  <div class="cartao">
+    <div class="linha-campos c3">
+      <div class="campo">
+        <label for="n-fornecedor">Fornecedor</label>
+        <input id="n-fornecedor" placeholder="Auto Peças Silva">
+      </div>
+      <div class="campo">
+        <label for="n-numero">Número da nota</label>
+        <input id="n-numero" placeholder="000123">
+      </div>
+      <div class="campo">
+        <label for="n-data">Emissão</label>
+        <input id="n-data" type="date">
+      </div>
+    </div>
+    <div class="campo" style="margin-bottom:0">
+      <label for="n-obs">Observações</label>
+      <input id="n-obs" placeholder="opcional">
+    </div>
+  </div>
+
+  <div class="cartao">
+    <div class="cartao-titulo">Itens</div>
+    <div id="itens"></div>
+    <button class="btn-mini" id="btn-add" onclick="addItem()"
+            style="margin-top:12px">+ Adicionar peça</button>
+    <div class="nota-total">Total da nota <b id="total">R$ 0,00</b></div>
+  </div>
+</div>
+
+<datalist id="lista-pecas"></datalist>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let pecas = [];
+  let notas = [];
+  let nota = null;        // nota em edição
+  let itens = [];         // linhas em memória
+  let apagar = [];        // itens removidos, apagados ao salvar
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    montarMenuConta(contexto);
+    document.getElementById("tela-lista").style.display = "block";
+    carregar();
+  })();
+
+  async function carregar() {
+    try {
+      const [n, p] = await Promise.all([
+        Banco.listar("compras", "order=criada_em.desc&limit=100"),
+        Banco.listar("pecas", "ativo=is.true&order=numero"),
+      ]);
+      notas = n || [];
+      pecas = p || [];
+      montarDatalist();
+      desenhar();
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+    }
+  }
+
+  /* Rótulo que o usuário digita e que volta para a peça. Começa pelo
+     número porque é o que ele tem na mão ao conferir a nota. */
+  const rotulo = p => `${p.numero} — ${p.nome}`
+    + (p.marca ? ` (${p.marca})` : "");
+
+  function montarDatalist() {
+    document.getElementById("lista-pecas").innerHTML =
+      pecas.map(p => `<option value="${esc(rotulo(p))}"></option>`).join("");
+  }
+
+  const ESTADO = {
+    rascunho: ["andamento", "Rascunho"],
+    lancada: ["concluida", "Lançada"],
+    cancelada: ["cancelada", "Cancelada"],
+  };
+
+  function desenhar() {
+    const alvo = document.getElementById("lista");
+    document.getElementById("resumo").textContent =
+      notas.length + " nota(s)";
+
+    if (!notas.length) {
+      alvo.innerHTML = '<div class="vazio">Nenhuma nota ainda.<br>'
+        + 'Lance a primeira em "+ Nova nota" para dar entrada no estoque.</div>';
+      return;
+    }
+
+    let html = '<table class="tabela"><thead><tr>'
+      + '<th style="width:110px">Emissão</th>'
+      + '<th>Fornecedor</th>'
+      + '<th class="esconde-cel" style="width:110px">Nº</th>'
+      + '<th style="width:120px">Situação</th>'
+      + '</tr></thead><tbody>';
+    for (const n of notas) {
+      const [cor, txt] = ESTADO[n.status] || ESTADO.rascunho;
+      html += `<tr data-id="${esc(n.id)}">
+        <td style="color:var(--texto-sec)">${esc(n.emitida_em ? soData(n.emitida_em) : "—")}</td>
+        <td>${esc(n.fornecedor || "—")}</td>
+        <td class="esconde-cel" style="color:var(--texto-sec)">${esc(n.numero || "—")}</td>
+        <td><span class="selo ${cor}">${esc(txt)}</span></td>
+      </tr>`;
+    }
+    alvo.innerHTML = html + "</tbody></table>";
+
+    alvo.querySelectorAll("tr[data-id]").forEach(tr =>
+      tr.addEventListener("click", () =>
+        abrirNota(notas.find(n => n.id === tr.dataset.id))));
+  }
+
+  /* -------------------------------------------------------------
+     Editor
+     ------------------------------------------------------------- */
+  function voltar() {
+    document.getElementById("tela-nota").style.display = "none";
+    document.getElementById("tela-lista").style.display = "block";
+    carregar();
+  }
+
+  async function abrirNota(n) {
+    nota = n;
+    itens = [];
+    apagar = [];
+    aviso(document.getElementById("msg2"), "");
+
+    document.getElementById("tela-lista").style.display = "none";
+    document.getElementById("tela-nota").style.display = "block";
+
+    const v = (id, val) => { document.getElementById(id).value = val || ""; };
+    v("n-fornecedor", n && n.fornecedor);
+    v("n-numero", n && n.numero);
+    v("n-data", n && n.emitida_em);
+    v("n-obs", n && n.observacoes);
+
+    if (!n) {
+      // nota nova já nasce com a data de hoje, que é o caso comum
+      document.getElementById("n-data").value =
+        new Date().toISOString().slice(0, 10);
+      document.getElementById("nota-titulo").textContent = "Nova nota";
+      addItem();
+    } else {
+      document.getElementById("nota-titulo").textContent =
+        "Nota " + (n.numero || "sem número");
+      try {
+        itens = await Banco.listar("compra_itens",
+          `compra_id=eq.${n.id}&order=ordem`) || [];
+      } catch (e) {
+        aviso(document.getElementById("msg2"), e.message, "erro");
+      }
+      if (!itens.length) addItem();
+    }
+
+    travar(n && n.status !== "rascunho");
+    desenharItens();
+  }
+
+  /* Nota lançada vira documento: os itens já viraram movimentação de
+     estoque, e mexer neles aqui deixaria o razão contando uma coisa e
+     a nota dizendo outra. Para corrigir, lance uma contagem. */
+  function travar(bloqueada) {
+    const campos = ["n-fornecedor", "n-numero", "n-data", "n-obs"];
+    campos.forEach(id => { document.getElementById(id).disabled = !!bloqueada; });
+    document.getElementById("btn-add").style.display = bloqueada ? "none" : "";
+    document.getElementById("btn-salvar").style.display = bloqueada ? "none" : "";
+    document.getElementById("btn-lancar").style.display = bloqueada ? "none" : "";
+    document.getElementById("nota-sub").textContent = bloqueada
+      ? "Nota já lançada. Os itens entraram no estoque e não podem ser alterados."
+      : "Os itens entram no estoque quando você lançar.";
+  }
+
+  function addItem() {
+    itens.push({ peca_id: null, quantidade: 1, custo_unit: null });
+    desenharItens();
+    // foco na linha nova, para dar para digitar em sequência
+    const campos = document.querySelectorAll("#itens .item-peca");
+    if (campos.length) campos[campos.length - 1].focus();
+  }
+
+  function desenharItens() {
+    const alvo = document.getElementById("itens");
+    const travado = nota && nota.status !== "rascunho";
+
+    if (!itens.length) {
+      alvo.innerHTML = '<div class="vazio">Nenhum item.</div>';
+      atualizarTotal();
+      return;
+    }
+
+    let html = '<table class="tabela tabela-itens"><thead><tr>'
+      + '<th>Peça</th>'
+      + '<th style="width:100px">Qtd</th>'
+      + '<th style="width:130px">Custo un.</th>'
+      + '<th style="width:120px">Subtotal</th>'
+      + (travado ? "" : '<th style="width:44px"></th>')
+      + '</tr></thead><tbody>';
+
+    itens.forEach((it, i) => {
+      const p = pecas.find(x => x.id === it.peca_id);
+      const sub = Number(it.quantidade || 0) * Number(it.custo_unit || 0);
+      html += `<tr>
+        <td>
+          <input class="item-peca" list="lista-pecas" data-i="${i}"
+                 value="${esc(p ? rotulo(p) : "")}"
+                 placeholder="nº ou nome da peça" ${travado ? "disabled" : ""}>
+        </td>
+        <td><input class="item-qtd" type="number" step="0.001" min="0"
+                   inputmode="decimal" data-i="${i}"
+                   value="${esc(String(it.quantidade ?? ""))}"
+                   ${travado ? "disabled" : ""}></td>
+        <td><input class="item-custo" type="number" step="0.01" min="0"
+                   inputmode="decimal" data-i="${i}"
+                   value="${esc(it.custo_unit == null ? "" : String(it.custo_unit))}"
+                   ${travado ? "disabled" : ""}></td>
+        <td style="color:var(--texto-sec)">${esc(dinheiro(sub))}</td>
+        ${travado ? "" : `<td><button class="btn-mini" data-remover="${i}">×</button></td>`}
+      </tr>`;
+    });
+    alvo.innerHTML = html + "</tbody></table>";
+
+    alvo.querySelectorAll(".item-peca").forEach(el =>
+      el.addEventListener("change", () => {
+        const achada = pecas.find(p => rotulo(p) === el.value.trim());
+        itens[el.dataset.i].peca_id = achada ? achada.id : null;
+        /* Custo em branco herda o da última compra: na conferência de
+           nota o preço quase nunca mudou, e redigitar tudo é o que faz
+           o usuário desistir de lançar. */
+        if (achada && (itens[el.dataset.i].custo_unit == null
+                       || itens[el.dataset.i].custo_unit === "")) {
+          itens[el.dataset.i].custo_unit = achada.preco_custo;
+        }
+        desenharItens();
+      }));
+
+    alvo.querySelectorAll(".item-qtd").forEach(el =>
+      el.addEventListener("input", () => {
+        itens[el.dataset.i].quantidade = el.value === "" ? "" : Number(el.value);
+        atualizarTotal();
+      }));
+
+    alvo.querySelectorAll(".item-custo").forEach(el =>
+      el.addEventListener("input", () => {
+        itens[el.dataset.i].custo_unit = el.value === "" ? null : Number(el.value);
+        atualizarTotal();
+      }));
+
+    alvo.querySelectorAll("[data-remover]").forEach(b =>
+      b.addEventListener("click", () => {
+        const it = itens[b.dataset.remover];
+        if (it.id) apagar.push(it.id);
+        itens.splice(b.dataset.remover, 1);
+        desenharItens();
+      }));
+
+    atualizarTotal();
+  }
+
+  function atualizarTotal() {
+    const t = itens.reduce((s, it) =>
+      s + Number(it.quantidade || 0) * Number(it.custo_unit || 0), 0);
+    document.getElementById("total").textContent = dinheiro(t);
+  }
+
+  function validos() {
+    return itens.filter(it => it.peca_id && Number(it.quantidade) > 0);
+  }
+
+  async function salvar(silencioso) {
+    const msg = document.getElementById("msg2");
+    const bons = validos();
+    if (!bons.length) {
+      aviso(msg, "Adicione ao menos uma peça com quantidade.", "erro");
+      return null;
+    }
+
+    const dados = {
+      fornecedor: document.getElementById("n-fornecedor").value.trim() || null,
+      numero: document.getElementById("n-numero").value.trim() || null,
+      emitida_em: document.getElementById("n-data").value || null,
+      observacoes: document.getElementById("n-obs").value.trim() || null,
+    };
+
+    const botao = document.getElementById("btn-salvar");
+    botao.disabled = true; botao.textContent = "Salvando...";
+    try {
+      if (nota) {
+        await Banco.atualizar("compras", nota.id, dados);
+      } else {
+        dados.oficina_id = contexto.oficina_id;
+        nota = await Banco.criar("compras", dados);
+      }
+
+      for (const id of apagar) await Banco.apagar("compra_itens", id);
+      apagar = [];
+
+      for (let i = 0; i < bons.length; i++) {
+        const it = bons[i];
+        const linha = {
+          compra_id: nota.id,
+          peca_id: it.peca_id,
+          quantidade: Number(it.quantidade),
+          custo_unit: it.custo_unit == null ? null : Number(it.custo_unit),
+          ordem: i,
+        };
+        if (it.id) await Banco.atualizar("compra_itens", it.id, linha);
+        else it.id = (await Banco.criar("compra_itens", linha)).id;
+      }
+
+      document.getElementById("nota-titulo").textContent =
+        "Nota " + (dados.numero || "sem número");
+      if (!silencioso) { aviso(msg, "Rascunho salvo.", "ok");
+                         setTimeout(() => aviso(msg, ""), 2000); }
+      return nota;
+    } catch (e) {
+      aviso(msg, e.message, "erro");
+      return null;
+    } finally {
+      botao.disabled = false; botao.textContent = "Salvar rascunho";
+    }
+  }
+
+  /* -------------------------------------------------------------
+     Lançar
+
+     Salva antes de lançar: se o usuário digitou um item e clicou
+     direto em "Lançar", aquele item precisa existir no banco para a
+     função somar. Lançar o que está na tela sem gravar entraria
+     errado no estoque.
+     ------------------------------------------------------------- */
+  async function lancar() {
+    const msg = document.getElementById("msg2");
+    const bons = validos();
+    if (!bons.length) {
+      aviso(msg, "Adicione ao menos uma peça com quantidade.", "erro");
+      return;
+    }
+
+    const resumo = bons.length === 1
+      ? "1 item entrará no estoque."
+      : bons.length + " itens entrarão no estoque.";
+    if (!confirm(resumo + " Depois de lançada, a nota não pode mais ser "
+               + "alterada. Continuar?")) return;
+
+    const botao = document.getElementById("btn-lancar");
+    botao.disabled = true; botao.textContent = "Lançando...";
+    try {
+      if (!await salvar(true)) return;
+      await Banco.chamar("lancar_compra", { p_compra_id: nota.id });
+      nota.status = "lancada";
+      travar(true);
+      desenharItens();
+      aviso(msg, "Nota lançada. O estoque foi atualizado.", "ok");
+    } catch (e) {
+      aviso(msg, e.message, "erro");
+    } finally {
+      botao.disabled = false; botao.textContent = "Lançar no estoque";
+    }
+  }
+</script>
+</body>
+</html>
