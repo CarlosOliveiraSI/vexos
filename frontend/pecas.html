@@ -213,40 +213,58 @@
             <input id="p-aplicacao" placeholder="Gol G5 1.0 2008-2013">
           </div>
         </div>
-        <div class="linha-campos c3">
+        <div class="linha-campos c2">
           <div class="campo">
             <label for="p-custo">Custo (R$)</label>
-            <input id="p-custo" type="number" step="0.01" min="0">
+            <input id="p-custo" type="number" step="0.01" min="0"
+                   inputmode="decimal">
           </div>
           <div class="campo">
             <label for="p-venda">Venda (R$)</label>
-            <input id="p-venda" type="number" step="0.01" min="0">
-          </div>
-          <div class="campo">
-            <label for="p-unidade">Unidade</label>
-            <input id="p-unidade" placeholder="un" maxlength="6">
+            <input id="p-venda" type="number" step="0.01" min="0"
+                   inputmode="decimal">
           </div>
         </div>
         <div class="linha-campos c2">
           <div class="campo">
+            <label for="p-unidade">Unidade de medida</label>
+            <select id="p-unidade">
+              <option value="un">un — unidade</option>
+              <option value="pç">pç — peça</option>
+              <option value="par">par</option>
+              <option value="jg">jg — jogo</option>
+              <option value="cj">cj — conjunto</option>
+              <option value="L">L — litro</option>
+              <option value="ml">ml — mililitro</option>
+              <option value="kg">kg — quilo</option>
+              <option value="g">g — grama</option>
+              <option value="m">m — metro</option>
+              <option value="cm">cm — centímetro</option>
+              <option value="cx">cx — caixa</option>
+            </select>
+          </div>
+          ${novo ? `
+          <div class="campo">
+            <label for="p-inicial">Quantidade na prateleira hoje</label>
+            <input id="p-inicial" type="number" step="0.001" value="0"
+                   inputmode="decimal">
+          </div>` : '<div class="campo"></div>'}
+        </div>
+        ${novo ? `<div class="sub" style="margin:-10px 0 18px">
+          A quantidade inicial vira um ajuste de inventário. Deixe 0 se a
+          peça ainda vai entrar por nota de compra.
+        </div>` : ""}
+        <div class="linha-campos c2">
+          <div class="campo">
             <label for="p-minimo">Estoque mínimo</label>
             <input id="p-minimo" type="number" step="0.001" min="0"
-                   placeholder="avisa quando chegar aqui">
+                   inputmode="decimal" placeholder="avisa quando chegar aqui">
           </div>
           <div class="campo">
             <label for="p-local">Localização</label>
             <input id="p-local" placeholder="Prateleira B3">
           </div>
         </div>
-        ${novo ? `
-        <div class="campo">
-          <label for="p-inicial">Quantidade que já tem na prateleira</label>
-          <input id="p-inicial" type="number" step="0.001" value="0">
-          <div class="sub" style="margin-top:6px">
-            Vira um ajuste de inventário. Deixe 0 se a peça ainda vai
-            entrar por nota de compra.
-          </div>
-        </div>` : ""}
         <div class="modal-acoes">
           ${novo || !gestor() ? "" :
             '<button class="btn-mini btn-perigo" id="p-inativar">Inativar</button>'}
@@ -264,8 +282,15 @@
     if (!novo) {
       v("p-nome", p.nome); v("p-codigo", p.codigo); v("p-marca", p.marca);
       v("p-aplicacao", p.aplicacao); v("p-custo", p.preco_custo);
-      v("p-venda", p.preco_venda); v("p-unidade", p.unidade);
+      v("p-venda", p.preco_venda);
       v("p-minimo", p.minimo); v("p-local", p.localizacao);
+      const sel = document.getElementById("p-unidade");
+      /* unidade fora da lista (dado antigo ou digitado antes do select):
+         entra como opção para não ser trocada em silêncio ao salvar */
+      if (p.unidade && ![...sel.options].some(o => o.value === p.unidade)) {
+        sel.add(new Option(p.unidade, p.unidade), 0);
+      }
+      sel.value = p.unidade || "un";
     }
 
     const fechar = () => fundo.remove();
@@ -341,12 +366,12 @@
       <div class="modal" style="width:min(420px,100%)">
         <h2>Contar ${esc(p.nome)}</h2>
         <div class="sub" style="margin-bottom:16px">
-          O sistema tem <b>${esc(fmtQtd(p.saldo))} ${esc(p.unidade || "un")}</b>.
+          O sistema tem <b>${esc(fmtQtd(p.saldo))}</b> ${esc(p.unidade || "un")}.
           Informe quanto há de fato na prateleira.
         </div>
         <div class="campo">
           <label for="a-saldo">Quantidade contada</label>
-          <input id="a-saldo" type="number" step="0.001" value="${esc(String(p.saldo || 0))}">
+          <input id="a-saldo" type="number" step="0.001" inputmode="decimal" value="${esc(String(p.saldo || 0))}">
         </div>
         <div class="campo">
           <label for="a-motivo">Motivo (opcional)</label>

@@ -135,6 +135,26 @@ button{font-family:inherit;}
 /* o item de Assinatura é um <a>, não um <button>: o sublinhado e a cor
    de link padrão vazariam por cima do estilo do menu */
 a.conta-item{text-decoration:none; box-sizing:border-box;}
+
+/* Código de consulta da peça: monoespaçado para os dígitos alinharem
+   entre as linhas — é assim que o olho encontra um número numa lista. */
+.cod-peca{
+  font-family:Consolas,"SF Mono",monospace; font-size:12.5px;
+  color:var(--texto-sec); letter-spacing:.5px; white-space:nowrap;
+}
+/* O saldo vem grudado na unidade ("5 un"); sem peso diferente, "0 5"
+   e "5 un" se confundem de relance. */
+.selo b{font-weight:800; font-size:13px;}
+
+/* Setinhas do input[type=number]: somem.
+   Num campo de quantidade elas ocupam a ponta direita, roubam o clique
+   de quem ia posicionar o cursor, e mudam o valor no scroll do mouse —
+   dá para alterar um estoque sem perceber, só rolando a página. */
+input[type=number]{-moz-appearance:textfield; appearance:textfield;}
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{
+  -webkit-appearance:none; margin:0;
+}
 .conta-item svg{
   width:15px; height:15px; stroke:var(--texto-sec); fill:none;
   stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none;
