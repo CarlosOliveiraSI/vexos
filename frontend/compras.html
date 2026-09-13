@@ -6,6 +6,7 @@
 <title>Notas de compra — VexOS</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="vexos.css">
+<link rel="stylesheet" href="nota-conferencia.css">
 </head>
 <body>
 
@@ -51,9 +52,13 @@
   <div class="cabeca">
     <div>
       <h1 id="nota-titulo">Nova nota</h1>
-      <div class="sub" id="nota-sub">Os itens entram no estoque quando você lançar.</div>
+      <div class="sub" id="nota-sub">Os itens entram no estoque quando você lançar.
+        Peça o XML ao fornecedor — a importação fica exata.</div>
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap">
+      <input type="file" id="arquivo-nota" accept=".xml,.pdf,.zip" multiple hidden>
+      <button class="btn-linha btn" id="btn-importar"
+              onclick="document.getElementById('arquivo-nota').click()">Importar XML ou PDF</button>
       <button class="btn-linha btn" onclick="voltar()">Voltar</button>
       <button class="btn-linha btn" id="btn-salvar" onclick="salvar()">Salvar rascunho</button>
       <button class="btn" id="btn-lancar" onclick="lancar()">Lançar no estoque</button>
@@ -95,6 +100,8 @@
 <datalist id="lista-pecas"></datalist>
 
 <script src="app.js"></script>
+<script src="nota-import.js"></script>
+<script src="nota-conferencia.js"></script>
 <script>
   let contexto = null;
   let pecas = [];
@@ -109,7 +116,36 @@
     montarMenuConta(contexto);
     document.getElementById("tela-lista").style.display = "block";
     carregar();
+    ligarImportacao();
   })();
+
+  /* -------------------------------------------------------------
+     Importação de NFe
+
+     O arquivo é lido no navegador e cai na tela de conferência.
+     Nada é gravado antes de o usuário confirmar: o caminho até o
+     banco é o mesmo da digitação manual — compras, compra_itens e
+     lancar_compra().
+     ------------------------------------------------------------- */
+  function ligarImportacao() {
+    const entrada = document.getElementById("arquivo-nota");
+    if (!entrada || typeof NotaConferencia === "undefined") return;
+
+    NotaConferencia.configurar({
+      oficinaId: contexto.oficina_id,
+      aoConcluir: (compra, lancada) => {
+        voltar();
+        carregar();
+        aviso(document.getElementById("msg"),
+              lancada ? "Nota lançada. O estoque foi atualizado."
+                      : "Rascunho salvo.", "ok");
+        setTimeout(() => aviso(document.getElementById("msg"), ""), 4000);
+      }
+    });
+
+    NotaConferencia.ligarInput(entrada, (erros) =>
+      console.warn("arquivos ignorados:", erros));
+  }
 
   async function carregar() {
     try {
