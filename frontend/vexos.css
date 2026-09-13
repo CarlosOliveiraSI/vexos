@@ -150,6 +150,15 @@ a.conta-item{text-decoration:none; box-sizing:border-box;}
    Num campo de quantidade elas ocupam a ponta direita, roubam o clique
    de quem ia posicionar o cursor, e mudam o valor no scroll do mouse —
    dá para alterar um estoque sem perceber, só rolando a página. */
+/* Saldo no formulário de edição: parece campo, mas é leitura — a
+   quantidade só muda pela contagem ou por nota, nunca digitada aqui. */
+.saldo-fixo{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px; background:var(--fundo); border:1px solid var(--borda);
+  border-radius:var(--r); padding:7px 9px 7px 12px; min-height:40px;
+}
+.saldo-fixo b{font-weight:800;}
+
 /* Título de bloco dentro de modal: separa grupos de campos sem o peso
    de um cartão aninhado, que empurraria o formulário para fora da tela. */
 .sub-secao{

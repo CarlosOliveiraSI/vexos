@@ -110,12 +110,36 @@
 
     let itens = pecas;
     if (termo) {
-      /* O número entra na busca como texto, e casando do INÍCIO: quem
-         digita "3" quer a peça 3, não as peças 13, 23 e 130. */
-      itens = itens.filter(p =>
-        String(p.numero ?? "").startsWith(termo)
-        || [p.nome, p.codigo, p.marca, p.aplicacao]
-             .some(c => (c || "").toLowerCase().includes(termo)));
+      /* Número casa de dois jeitos, conforme o que foi digitado.
+
+         SÓ DÍGITOS -> casa do INÍCIO, em nº e ref. do fabricante.
+         Buscar "3" dentro de "37589000" acharia quase todo código da
+         oficina, porque código numérico longo contém quase todo
+         dígito. Do início, "3" traz a peça 3 e as refs que começam
+         com 3 — que é o que alguém quer ao digitar um número.
+
+         TEM LETRA -> casa em qualquer posição do texto, porque aí a
+         intenção é outra: "freio" precisa achar "pastilha de freio". */
+      const soDigitos = /^[0-9]+$/.test(termo);
+
+      itens = itens.filter(p => {
+        const num = String(p.numero ?? "");
+        const ref = (p.codigo || "").toLowerCase();
+
+        if (soDigitos) {
+          return num === termo || num.startsWith(termo)
+              || ref.replace(/[^0-9a-z]/g, "").startsWith(termo);
+        }
+        return [p.nome, p.codigo, p.marca, p.aplicacao]
+          .some(c => (c || "").toLowerCase().includes(termo));
+      });
+
+      /* Peça encontrada pelo número exato vai para o topo: quem digitou
+         "3" tinha um alvo, não uma lista. */
+      if (soDigitos) {
+        itens = itens.slice().sort((a, b) =>
+          (String(b.numero) === termo) - (String(a.numero) === termo));
+      }
     }
     if (soAlerta) itens = itens.filter(emAlerta);
 
@@ -229,7 +253,7 @@
         </div>
 
         <div class="sub-secao">Estoque</div>
-        <div class="linha-campos ${novo ? "c3" : "c2"}">
+        <div class="linha-campos c3">
           <div class="campo">
             <label for="p-unidade">Unidade</label>
             <select id="p-unidade">
@@ -252,7 +276,14 @@
             <label for="p-inicial">Tem hoje</label>
             <input id="p-inicial" type="number" step="0.001" value="0"
                    inputmode="decimal">
-          </div>` : ""}
+          </div>` : `
+          <div class="campo">
+            <label>Tem hoje</label>
+            <div class="saldo-fixo">
+              <span><b>${esc(fmtQtd(p.saldo))}</b> ${esc(p.unidade || "un")}</span>
+              <button type="button" class="btn-mini" id="p-contar">Contar</button>
+            </div>
+          </div>`}
           <div class="campo">
             <label for="p-minimo">Avisar abaixo de</label>
             <input id="p-minimo" type="number" step="0.001" min="0"
@@ -296,6 +327,13 @@
     const fechar = () => fundo.remove();
     document.getElementById("p-cancelar").addEventListener("click", fechar);
     fundo.addEventListener("click", e => { if (e.target === fundo) fechar(); });
+
+    /* A quantidade não é editável aqui de propósito: ela é consequência
+       do razão de movimentações. Editar direto apagaria a explicação de
+       por que o saldo é o que é. O caminho é a contagem, que registra o
+       ajuste com motivo e autor. */
+    const contar = document.getElementById("p-contar");
+    if (contar) contar.addEventListener("click", () => { fechar(); abrirAjuste(p); });
 
     const inativar = document.getElementById("p-inativar");
     if (inativar) inativar.addEventListener("click", async () => {
