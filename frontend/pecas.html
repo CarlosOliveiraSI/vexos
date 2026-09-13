@@ -193,41 +193,45 @@
         <h2>${novo ? "Nova peça" : "Editar peça"}</h2>
         ${novo ? "" : `<div class="sub" style="margin-bottom:18px">
           Peça nº <b>${esc(String(p.numero ?? "—"))}</b></div>`}
-        <div class="linha-campos c2">
-          <div class="campo">
-            <label for="p-nome">Nome</label>
-            <input id="p-nome" placeholder="Pastilha de freio dianteira">
-          </div>
-          <div class="campo">
-            <label for="p-codigo">Ref. do fabricante</label>
-            <input id="p-codigo" placeholder="Referência do fabricante">
-          </div>
+        <div class="campo">
+          <label for="p-nome">Nome da peça</label>
+          <input id="p-nome" placeholder="Pastilha de freio dianteira">
         </div>
+
         <div class="linha-campos c2">
           <div class="campo">
             <label for="p-marca">Marca</label>
             <input id="p-marca" placeholder="Bosch">
           </div>
           <div class="campo">
-            <label for="p-aplicacao">Aplicação</label>
-            <input id="p-aplicacao" placeholder="Gol G5 1.0 2008-2013">
+            <label for="p-codigo">Ref. do fabricante</label>
+            <input id="p-codigo" placeholder="opcional">
           </div>
         </div>
+
+        <div class="campo">
+          <label for="p-aplicacao">Aplicação</label>
+          <input id="p-aplicacao" placeholder="Gol G5 1.0 2008-2013">
+        </div>
+
+        <div class="sub-secao">Preços</div>
         <div class="linha-campos c2">
           <div class="campo">
             <label for="p-custo">Custo (R$)</label>
             <input id="p-custo" type="number" step="0.01" min="0"
-                   inputmode="decimal">
+                   inputmode="decimal" placeholder="0,00">
           </div>
           <div class="campo">
             <label for="p-venda">Venda (R$)</label>
             <input id="p-venda" type="number" step="0.01" min="0"
-                   inputmode="decimal">
+                   inputmode="decimal" placeholder="0,00">
           </div>
         </div>
-        <div class="linha-campos c2">
+
+        <div class="sub-secao">Estoque</div>
+        <div class="linha-campos ${novo ? "c3" : "c2"}">
           <div class="campo">
-            <label for="p-unidade">Unidade de medida</label>
+            <label for="p-unidade">Unidade</label>
             <select id="p-unidade">
               <option value="un">un — unidade</option>
               <option value="pç">pç — peça</option>
@@ -245,26 +249,22 @@
           </div>
           ${novo ? `
           <div class="campo">
-            <label for="p-inicial">Quantidade na prateleira hoje</label>
+            <label for="p-inicial">Tem hoje</label>
             <input id="p-inicial" type="number" step="0.001" value="0"
                    inputmode="decimal">
-          </div>` : '<div class="campo"></div>'}
-        </div>
-        ${novo ? `<div class="sub" style="margin:-10px 0 18px">
-          A quantidade inicial vira um ajuste de inventário. Deixe 0 se a
-          peça ainda vai entrar por nota de compra.
-        </div>` : ""}
-        <div class="linha-campos c2">
+          </div>` : ""}
           <div class="campo">
-            <label for="p-minimo">Estoque mínimo</label>
+            <label for="p-minimo">Avisar abaixo de</label>
             <input id="p-minimo" type="number" step="0.001" min="0"
-                   inputmode="decimal" placeholder="avisa quando chegar aqui">
-          </div>
-          <div class="campo">
-            <label for="p-local">Localização</label>
-            <input id="p-local" placeholder="Prateleira B3">
+                   inputmode="decimal" placeholder="opcional">
           </div>
         </div>
+
+        <div class="campo">
+          <label for="p-local">Localização</label>
+          <input id="p-local" placeholder="Prateleira B3">
+        </div>
+
         <div class="modal-acoes">
           ${novo || !gestor() ? "" :
             '<button class="btn-mini btn-perigo" id="p-inativar">Inativar</button>'}
