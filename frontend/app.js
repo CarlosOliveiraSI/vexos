@@ -320,13 +320,6 @@ function montarMenuConta(ctx) {
       if (location.pathname.endsWith("usuarios.html")) u.className = "ativo";
       nav.appendChild(u);
     }
-    if (nav && !nav.querySelector('a[href="assinatura.html"]')) {
-      const s = document.createElement("a");
-      s.href = "assinatura.html";
-      s.textContent = "Assinatura";
-      if (location.pathname.endsWith("assinatura.html")) s.className = "ativo";
-      nav.appendChild(s);
-    }
     if (nav && !nav.querySelector('a[href="oficina.html"]')) {
       const o = document.createElement("a");
       o.href = "oficina.html";
@@ -338,6 +331,12 @@ function montarMenuConta(ctx) {
 
   const nome = ctx.oficina || ctx.email || "";
   const inicial = (nome.trim()[0] || "?").toUpperCase();
+
+  /* Assinatura fica AQUI, e não na barra central, por dois motivos: é
+     consulta ocasional (ver vencimento, trocar de plano), não trabalho
+     do dia a dia como Ordens e Veículos; e a barra já estava com sete
+     itens, o que empurra o menu para quebrar em telas menores. */
+  const gestor = ctx.papel === "dono" || ctx.papel === "admin";
 
   alvo.innerHTML = `
     <button class="conta-botao" id="conta-botao" aria-haspopup="true"
@@ -352,6 +351,11 @@ function montarMenuConta(ctx) {
         <span>${esc(ctx.email || "")}</span>
         ${ctx.papel ? `<span class="conta-papel">${esc(PAPEL[ctx.papel] || ctx.papel)}</span>` : ""}
       </div>
+      ${gestor ? `
+      <a class="conta-item" role="menuitem" href="assinatura.html">
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/></svg>
+        Assinatura
+      </a>` : ""}
       <button class="conta-item" role="menuitem" id="conta-vextron">
         <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/><rect x="9.5" y="9.5" width="5" height="5" rx=".8"/><path d="M9 2.5v2.5M15 2.5v2.5M9 19v2.5M15 19v2.5M2.5 9h2.5M2.5 15h2.5M19 9h2.5M19 15h2.5"/></svg>
         Sobre o VexOS

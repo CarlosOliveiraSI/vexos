@@ -132,6 +132,9 @@ button{font-family:inherit;}
   font-family:inherit; text-align:left;
 }
 .conta-item:hover{background:var(--cartao-claro);}
+/* o item de Assinatura é um <a>, não um <button>: o sublinhado e a cor
+   de link padrão vazariam por cima do estilo do menu */
+a.conta-item{text-decoration:none; box-sizing:border-box;}
 .conta-item svg{
   width:15px; height:15px; stroke:var(--texto-sec); fill:none;
   stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none;
