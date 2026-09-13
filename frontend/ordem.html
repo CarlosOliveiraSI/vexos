@@ -601,7 +601,8 @@
         <div class="via-empresa">
           ${of.logo ? `<img class="via-logo" src="${esc(of.logo)}" alt="">` : ""}
           <div>
-            <div class="via-nome">${esc(of.nome || contexto.oficina || "")}</div>
+            ${of.logo ? "" :
+              `<div class="via-nome">${esc(of.nome || contexto.oficina || "")}</div>`}
             ${of.documento ? `<div class="via-linha">${esc(of.documento)}</div>` : ""}
             ${endereco ? `<div class="via-linha">${esc(endereco)}</div>` : ""}
             ${contato ? `<div class="via-linha">${esc(contato)}</div>` : ""}

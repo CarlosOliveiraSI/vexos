@@ -408,7 +408,10 @@ h1{font-size:24px; font-weight:800; letter-spacing:-.3px;}
     gap:20px; padding-bottom:12px; border-bottom:2px solid #111;
   }
   .via-empresa{display:flex; gap:14px; align-items:flex-start;}
-  .via-logo{max-width:150px; max-height:56px; object-fit:contain;}
+  /* Com logo, o nome da oficina sai do cabeçalho: a maioria das logos
+     já traz o nome escrito, e repetir fica redundante no papel. Por
+     isso a logo cresce um pouco — ela passa a ser a identificação. */
+  .via-logo{max-width:190px; max-height:70px; object-fit:contain;}
   .via-nome{font-size:15pt; font-weight:800; line-height:1.2;}
   .via-linha{font-size:9pt; color:#444;}
 
