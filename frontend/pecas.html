@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estoque — VexOS</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="vexos.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div class="marca">
+      <span class="marca-barra"></span>
+      <span class="marca-nome">Vex<b>OS</b>
+        <span class="marca-sub">ESTOQUE</span>
+      </span>
+    </div>
+    <nav class="topo-nav">
+      <a href="ordens.html">Ordens</a>
+      <a href="veiculos.html">Veículos</a>
+      <a href="clientes.html">Clientes</a>
+    </nav>
+    <div class="topo-conta" id="conta"></div>
+  </div>
+</header>
+
+<div class="pagina" id="pagina" style="display:none">
+  <div class="cabeca">
+    <div>
+      <h1>Estoque</h1>
+      <div class="sub" id="resumo">Peças, saldo e preços.</div>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap">
+      <a class="btn-linha btn" href="compras.html">Notas de compra</a>
+      <button class="btn" onclick="abrirPeca(null)">+ Nova peça</button>
+    </div>
+  </div>
+
+  <div class="aviso" id="msg"></div>
+
+  <div class="cartao">
+    <div class="repo-controles" style="margin-bottom:14px">
+      <input type="text" class="busca-input" id="busca"
+             placeholder="Buscar por nome, código, marca ou aplicação..."
+             oninput="desenhar()"
+             onkeydown="if(event.key==='Escape'){this.value='';desenhar();}">
+      <button class="btn-mini" id="btn-filtro" onclick="alternarFiltro()">
+        Só com alerta
+      </button>
+    </div>
+    <div id="lista"><div class="carregando"><span class="spinner"></span> Carregando...</div></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  let contexto = null;
+  let pecas = [];
+  let soAlerta = false;
+
+  (async function () {
+    contexto = await exigirSessao();
+    if (!contexto) return;
+    montarMenuConta(contexto);
+    document.getElementById("pagina").style.display = "block";
+    carregar();
+  })();
+
+  const gestor = () => contexto &&
+    (contexto.papel === "dono" || contexto.papel === "admin");
+
+  /* Peça precisa de atenção quando o saldo está negativo (faltou lançar
+     uma entrada) ou abaixo do mínimo (hora de comprar). São os dois
+     motivos pelos quais alguém abre esta tela sem estar procurando algo
+     específico. */
+  function emAlerta(p) {
+    const s = Number(p.saldo || 0);
+    return s < 0 || (p.minimo !== null && p.minimo !== undefined
+                     && s <= Number(p.minimo));
+  }
+
+  async function carregar() {
+    try {
+      pecas = await Banco.listar("pecas", "ativo=is.true&order=nome") || [];
+      desenhar();
+    } catch (e) {
+      aviso(document.getElementById("msg"), e.message, "erro");
+    }
+  }
+
+  function alternarFiltro() {
+    soAlerta = !soAlerta;
+    document.getElementById("btn-filtro").classList.toggle("ativo", soAlerta);
+    desenhar();
+  }
+
+  function fmtQtd(n) {
+    const v = Number(n || 0);
+    return v % 1 === 0 ? String(v) : v.toFixed(3).replace(/0+$/, "");
+  }
+
+  function desenhar() {
+    const alvo = document.getElementById("lista");
+    const termo = (document.getElementById("busca").value || "")
+      .trim().toLowerCase();
+
+    let itens = pecas;
+    if (termo) {
+      itens = itens.filter(p => [p.nome, p.codigo, p.marca, p.aplicacao]
+        .some(c => (c || "").toLowerCase().includes(termo)));
+    }
+    if (soAlerta) itens = itens.filter(emAlerta);
+
+    const alertas = pecas.filter(emAlerta).length;
+    document.getElementById("resumo").textContent =
+      pecas.length + " peça(s) cadastrada(s)"
+      + (alertas ? " · " + alertas + " precisando de atenção" : "");
+
+    if (!itens.length) {
+      alvo.innerHTML = !pecas.length
+        ? estadoVazio("Nenhuma peça cadastrada",
+            'Cadastre a primeira em "+ Nova peça", ou lance uma nota de compra.')
+        : estadoVazio("Nada encontrado",
+            soAlerta ? "Nenhuma peça em alerta." : "Nenhuma peça com esse termo.");
+      return;
+    }
+
+    let html = '<table class="tabela"><thead><tr>'
+      + '<th>Peça</th>'
+      + '<th class="esconde-cel" style="width:120px">Código</th>'
+      + '<th style="width:110px">Saldo</th>'
+      + '<th class="esconde-cel" style="width:110px">Custo</th>'
+      + '<th style="width:110px">Venda</th>'
+      + '<th style="width:150px"></th>'
+      + '</tr></thead><tbody>';
+
+    for (const p of itens) {
+      const s = Number(p.saldo || 0);
+      let selo = "concluida";
+      if (s < 0) selo = "cancelada";
+      else if (p.minimo !== null && p.minimo !== undefined
+               && s <= Number(p.minimo)) selo = "andamento";
+
+      const sub = [p.marca, p.aplicacao].filter(Boolean).join(" · ");
+      html += `<tr style="cursor:default">
+        <td>
+          <div>${esc(p.nome)}</div>
+          ${sub ? `<div class="sub" style="font-size:12px">${esc(sub)}</div>` : ""}
+        </td>
+        <td class="esconde-cel" style="color:var(--texto-sec)">${esc(p.codigo || "—")}</td>
+        <td><span class="selo ${selo}">${esc(fmtQtd(p.saldo))} ${esc(p.unidade || "un")}</span></td>
+        <td class="esconde-cel" style="color:var(--texto-sec)">${
+          p.preco_custo == null ? "—" : esc(dinheiro(p.preco_custo))}</td>
+        <td>${p.preco_venda == null ? "—" : esc(dinheiro(p.preco_venda))}</td>
+        <td style="text-align:right; white-space:nowrap">
+          <button class="btn-mini" data-acao="ajustar" data-id="${esc(p.id)}">Contar</button>
+          <button class="btn-mini" data-acao="editar" data-id="${esc(p.id)}">Editar</button>
+        </td>
+      </tr>`;
+    }
+    alvo.innerHTML = html + "</tbody></table>";
+
+    alvo.querySelectorAll("[data-acao]").forEach(b => {
+      b.addEventListener("click", () => {
+        const p = pecas.find(x => x.id === b.dataset.id);
+        if (!p) return;
+        b.dataset.acao === "ajustar" ? abrirAjuste(p) : abrirPeca(p);
+      });
+    });
+  }
+
+  /* -------------------------------------------------------------
+     Cadastro / edição
+     ------------------------------------------------------------- */
+  function abrirPeca(p) {
+    const novo = !p;
+    const fundo = document.createElement("div");
+    fundo.className = "modal-fundo";
+    fundo.innerHTML = `
+      <div class="modal" style="width:min(620px,100%)">
+        <h2>${novo ? "Nova peça" : "Editar peça"}</h2>
+        <div class="linha-campos c2">
+          <div class="campo">
+            <label for="p-nome">Nome</label>
+            <input id="p-nome" placeholder="Pastilha de freio dianteira">
+          </div>
+          <div class="campo">
+            <label for="p-codigo">Código</label>
+            <input id="p-codigo" placeholder="Referência do fabricante">
+          </div>
+        </div>
+        <div class="linha-campos c2">
+          <div class="campo">
+            <label for="p-marca">Marca</label>
+            <input id="p-marca" placeholder="Bosch">
+          </div>
+          <div class="campo">
+            <label for="p-aplicacao">Aplicação</label>
+            <input id="p-aplicacao" placeholder="Gol G5 1.0 2008-2013">
+          </div>
+        </div>
+        <div class="linha-campos c3">
+          <div class="campo">
+            <label for="p-custo">Custo (R$)</label>
+            <input id="p-custo" type="number" step="0.01" min="0">
+          </div>
+          <div class="campo">
+            <label for="p-venda">Venda (R$)</label>
+            <input id="p-venda" type="number" step="0.01" min="0">
+          </div>
+          <div class="campo">
+            <label for="p-unidade">Unidade</label>
+            <input id="p-unidade" placeholder="un" maxlength="6">
+          </div>
+        </div>
+        <div class="linha-campos c2">
+          <div class="campo">
+            <label for="p-minimo">Estoque mínimo</label>
+            <input id="p-minimo" type="number" step="0.001" min="0"
+                   placeholder="avisa quando chegar aqui">
+          </div>
+          <div class="campo">
+            <label for="p-local">Localização</label>
+            <input id="p-local" placeholder="Prateleira B3">
+          </div>
+        </div>
+        ${novo ? `
+        <div class="campo">
+          <label for="p-inicial">Quantidade que já tem na prateleira</label>
+          <input id="p-inicial" type="number" step="0.001" value="0">
+          <div class="sub" style="margin-top:6px">
+            Vira um ajuste de inventário. Deixe 0 se a peça ainda vai
+            entrar por nota de compra.
+          </div>
+        </div>` : ""}
+        <div class="modal-acoes">
+          ${novo || !gestor() ? "" :
+            '<button class="btn-mini btn-perigo" id="p-inativar">Inativar</button>'}
+          <button class="btn-secundario" id="p-cancelar">Cancelar</button>
+          <button class="btn" id="p-salvar">${novo ? "Cadastrar" : "Salvar"}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(fundo);
+
+    const v = (id, val) => {
+      const el = document.getElementById(id);
+      if (val !== undefined) el.value = val === null ? "" : val;
+      return (el.value || "").trim();
+    };
+    if (!novo) {
+      v("p-nome", p.nome); v("p-codigo", p.codigo); v("p-marca", p.marca);
+      v("p-aplicacao", p.aplicacao); v("p-custo", p.preco_custo);
+      v("p-venda", p.preco_venda); v("p-unidade", p.unidade);
+      v("p-minimo", p.minimo); v("p-local", p.localizacao);
+    }
+
+    const fechar = () => fundo.remove();
+    document.getElementById("p-cancelar").addEventListener("click", fechar);
+    fundo.addEventListener("click", e => { if (e.target === fundo) fechar(); });
+
+    const inativar = document.getElementById("p-inativar");
+    if (inativar) inativar.addEventListener("click", async () => {
+      /* Inativa em vez de apagar: a peça aparece no histórico de ordens
+         antigas e no razão do estoque. Apagar quebraria os dois. */
+      if (!confirm(`Inativar "${p.nome}"? Ela some da busca, mas continua `
+                 + "no histórico das ordens.")) return;
+      try {
+        await Banco.atualizar("pecas", p.id, { ativo: false });
+        fechar(); carregar();
+      } catch (e) {
+        aviso(document.getElementById("msg"), e.message, "erro");
+      }
+    });
+
+    document.getElementById("p-salvar").addEventListener("click", async () => {
+      const nome = v("p-nome");
+      if (!nome) { alert("Informe o nome da peça."); return; }
+
+      const num = id => { const t = v(id); return t === "" ? null : Number(t); };
+      const dados = {
+        nome: nome,
+        codigo: v("p-codigo") || null,
+        marca: v("p-marca") || null,
+        aplicacao: v("p-aplicacao") || null,
+        unidade: v("p-unidade") || "un",
+        localizacao: v("p-local") || null,
+        preco_custo: num("p-custo"),
+        preco_venda: num("p-venda"),
+        minimo: num("p-minimo"),
+      };
+
+      const botao = document.getElementById("p-salvar");
+      botao.disabled = true; botao.textContent = "Salvando...";
+      try {
+        if (novo) {
+          dados.oficina_id = contexto.oficina_id;
+          const criada = await Banco.criar("pecas", dados);
+          const inicial = Number(v("p-inicial") || 0);
+          if (inicial) await Banco.chamar("ajustar_estoque", {
+            p_peca_id: criada.id, p_novo_saldo: inicial,
+            p_motivo: "Cadastro inicial",
+          });
+        } else {
+          await Banco.atualizar("pecas", p.id, dados);
+        }
+        fechar(); carregar();
+      } catch (e) {
+        botao.disabled = false; botao.textContent = novo ? "Cadastrar" : "Salvar";
+        aviso(document.getElementById("msg"), e.message, "erro");
+      }
+    });
+
+    document.getElementById("p-nome").focus();
+  }
+
+  /* -------------------------------------------------------------
+     Contagem de inventário
+
+     Pergunta quanto TEM, não quanto mudar. É assim que se conta
+     estoque: você olha a prateleira e vê sete. Pedir a diferença
+     obriga a fazer conta de cabeça, e conta de cabeça erra.
+     ------------------------------------------------------------- */
+  function abrirAjuste(p) {
+    const fundo = document.createElement("div");
+    fundo.className = "modal-fundo";
+    fundo.innerHTML = `
+      <div class="modal" style="width:min(420px,100%)">
+        <h2>Contar ${esc(p.nome)}</h2>
+        <div class="sub" style="margin-bottom:16px">
+          O sistema tem <b>${esc(fmtQtd(p.saldo))} ${esc(p.unidade || "un")}</b>.
+          Informe quanto há de fato na prateleira.
+        </div>
+        <div class="campo">
+          <label for="a-saldo">Quantidade contada</label>
+          <input id="a-saldo" type="number" step="0.001" value="${esc(String(p.saldo || 0))}">
+        </div>
+        <div class="campo">
+          <label for="a-motivo">Motivo (opcional)</label>
+          <input id="a-motivo" placeholder="Inventário, quebra, devolução...">
+        </div>
+        <div class="modal-acoes">
+          <button class="btn-secundario" id="a-cancelar">Cancelar</button>
+          <button class="btn" id="a-salvar">Ajustar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(fundo);
+
+    const fechar = () => fundo.remove();
+    document.getElementById("a-cancelar").addEventListener("click", fechar);
+    fundo.addEventListener("click", e => { if (e.target === fundo) fechar(); });
+
+    document.getElementById("a-salvar").addEventListener("click", async () => {
+      const texto = (document.getElementById("a-saldo").value || "").trim();
+      if (texto === "" || isNaN(Number(texto))) {
+        alert("Informe a quantidade contada."); return;
+      }
+      const botao = document.getElementById("a-salvar");
+      botao.disabled = true; botao.textContent = "Ajustando...";
+      try {
+        await Banco.chamar("ajustar_estoque", {
+          p_peca_id: p.id,
+          p_novo_saldo: Number(texto),
+          p_motivo: (document.getElementById("a-motivo").value || "").trim(),
+        });
+        fechar(); carregar();
+      } catch (e) {
+        botao.disabled = false; botao.textContent = "Ajustar";
+        aviso(document.getElementById("msg"), e.message, "erro");
+      }
+    });
+
+    const campo = document.getElementById("a-saldo");
+    campo.focus(); campo.select();
+  }
+</script>
+</body>
+</html>
