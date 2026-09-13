@@ -34,7 +34,7 @@
     </div>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
       <div class="busca">
-        <input id="busca" placeholder="Buscar por nome, código, marca..."
+        <input id="busca" placeholder="Buscar por nº, nome, código ou marca..."
                oninput="desenhar()"
                onkeydown="if(event.key==='Escape'){this.value='';desenhar();}">
       </div>
@@ -110,8 +110,12 @@
 
     let itens = pecas;
     if (termo) {
-      itens = itens.filter(p => [p.nome, p.codigo, p.marca, p.aplicacao]
-        .some(c => (c || "").toLowerCase().includes(termo)));
+      /* O número entra na busca como texto, e casando do INÍCIO: quem
+         digita "3" quer a peça 3, não as peças 13, 23 e 130. */
+      itens = itens.filter(p =>
+        String(p.numero ?? "").startsWith(termo)
+        || [p.nome, p.codigo, p.marca, p.aplicacao]
+             .some(c => (c || "").toLowerCase().includes(termo)));
     }
     if (soAlerta) itens = itens.filter(emAlerta);
 
@@ -131,9 +135,10 @@
     }
 
     let html = '<table class="tabela"><thead><tr>'
+      + '<th style="width:60px">Nº</th>'
       + '<th>Peça</th>'
-      + '<th class="esconde-cel" style="width:120px">Código</th>'
-      + '<th style="width:110px">Saldo</th>'
+      + '<th class="esconde-cel" style="width:120px">Ref. fabricante</th>'
+      + '<th style="width:120px">Saldo</th>'
       + '<th class="esconde-cel" style="width:110px">Custo</th>'
       + '<th style="width:110px">Venda</th>'
       + '<th style="width:150px"></th>'
@@ -148,12 +153,14 @@
 
       const sub = [p.marca, p.aplicacao].filter(Boolean).join(" · ");
       html += `<tr style="cursor:default">
+        <td><span class="cod-peca">${esc(String(p.numero ?? "—"))}</span></td>
         <td>
           <div>${esc(p.nome)}</div>
           ${sub ? `<div class="sub" style="font-size:12px">${esc(sub)}</div>` : ""}
         </td>
         <td class="esconde-cel" style="color:var(--texto-sec)">${esc(p.codigo || "—")}</td>
-        <td><span class="selo ${selo}">${esc(fmtQtd(p.saldo))} ${esc(p.unidade || "un")}</span></td>
+        <td><span class="selo ${selo}"><b>${esc(fmtQtd(p.saldo))}</b>&nbsp;${
+          esc(p.unidade || "un")}</span></td>
         <td class="esconde-cel" style="color:var(--texto-sec)">${
           p.preco_custo == null ? "—" : esc(dinheiro(p.preco_custo))}</td>
         <td>${p.preco_venda == null ? "—" : esc(dinheiro(p.preco_venda))}</td>
@@ -184,13 +191,15 @@
     fundo.innerHTML = `
       <div class="modal" style="width:min(620px,100%)">
         <h2>${novo ? "Nova peça" : "Editar peça"}</h2>
+        ${novo ? "" : `<div class="sub" style="margin-bottom:18px">
+          Peça nº <b>${esc(String(p.numero ?? "—"))}</b></div>`}
         <div class="linha-campos c2">
           <div class="campo">
             <label for="p-nome">Nome</label>
             <input id="p-nome" placeholder="Pastilha de freio dianteira">
           </div>
           <div class="campo">
-            <label for="p-codigo">Código</label>
+            <label for="p-codigo">Ref. do fabricante</label>
             <input id="p-codigo" placeholder="Referência do fabricante">
           </div>
         </div>
