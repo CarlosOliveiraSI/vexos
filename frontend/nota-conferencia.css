@@ -402,3 +402,34 @@
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------------------------------------------------- mensagens no modal */
+.nc-mensagem {
+  margin: 16px 26px 0;
+  padding: 11px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.nc-mensagem-erro {
+  background: rgba(194, 65, 58, .14);
+  border: 1px solid rgba(194, 65, 58, .4);
+  color: #ff9a8a;
+}
+
+.nc-mensagem-info {
+  background: rgba(255, 122, 24, .12);
+  border: 1px solid rgba(255, 122, 24, .38);
+  color: #ffb27a;
+}
+
+.nc-mensagem-ok {
+  background: rgba(61, 143, 61, .14);
+  border: 1px solid rgba(61, 143, 61, .4);
+  color: #8fd08f;
+}
+
+@media (max-width: 860px) {
+  .nc-mensagem { margin-left: 14px; margin-right: 14px; }
+}

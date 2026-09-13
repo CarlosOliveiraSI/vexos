@@ -69,6 +69,41 @@
     };
   }
 
+  // Códigos de UF do IBGE — os dois primeiros dígitos da chave
+  const UFS = ['11','12','13','14','15','16','17','21','22','23','24','25','26',
+               '27','28','29','31','32','33','35','41','42','43','50','51','52','53'];
+
+  /**
+   * Além do dígito verificador, confere se a chave faz sentido: UF existente,
+   * mês entre 01 e 12, modelo 55 (NF-e) ou 65 (NFC-e). Sozinho, o módulo 11
+   * aceita 1 em cada 11 sequências — pouco para varrer um documento inteiro
+   * atrás de 44 dígitos.
+   */
+  function chavePlausivel(chave) {
+    if (!chaveValida(chave)) return false;
+    if (UFS.indexOf(chave.slice(0, 2)) === -1) return false;
+    const mes = parseInt(chave.slice(4, 6), 10);
+    if (!(mes >= 1 && mes <= 12)) return false;
+    const modelo = chave.slice(20, 22);
+    if (modelo !== '55' && modelo !== '65') return false;
+    return true;
+  }
+
+  /**
+   * Procura a chave em qualquer ponto de uma sequência de dígitos,
+   * deslizando uma janela de 44 — no DANFE ela costuma vir grudada ao
+   * número da nota na mesma linha, então exigir a linha inteira com
+   * exatamente 44 dígitos não funciona.
+   */
+  function acharChave(digitos) {
+    if (!digitos || digitos.length < 44) return '';
+    for (let i = 0; i + 44 <= digitos.length; i++) {
+      const candidata = digitos.substr(i, 44);
+      if (chavePlausivel(candidata)) return candidata;
+    }
+    return '';
+  }
+
   function carregarScript(url) {
     return new Promise((ok, erro) => {
       if (document.querySelector(`script[src="${url}"]`)) return ok();
@@ -150,7 +185,7 @@
 
     const avisos = [];
     const chave = soDigitos(infNFe.getAttribute('Id') || '').slice(-44);
-    if (chave && !chaveValida(chave)) avisos.push('A chave de acesso não passou na validação do dígito verificador.');
+    if (chave && !chavePlausivel(chave)) avisos.push('A chave de acesso não passou na validação do dígito verificador.');
 
     const ide = filho(infNFe, 'ide');
     const emit = filho(infNFe, 'emit');
@@ -292,45 +327,60 @@
     }
   }
 
+  /* Cada emissor escreve o cabeçalho do DANFE de um jeito: QTD., QUANT.,
+     VLR UNIT., VALOR UNITÁRIO. Os regexes cobrem as formas que aparecem
+     na prática. */
   const ROTULOS_COLUNA = [
-    { chave: 'codigo', regex: /^C[ÓO]D(IGO)?/ },
-    { chave: 'descricao', regex: /^DESCRI/ },
-    { chave: 'ncm', regex: /^NCM/ },
-    { chave: 'cst', regex: /^(CST|CSOSN|O\/?CST)/ },
-    { chave: 'cfop', regex: /^CFOP/ },
-    { chave: 'unidade', regex: /^(UNID|UN)$|^UNIDADE/ },
-    { chave: 'quantidade', regex: /^QUANT/ },
-    { chave: 'valorUnitario', regex: /^(VALOR\s+)?UNIT/ },
-    { chave: 'valorTotal', regex: /^(VALOR\s+)?TOTAL/ }
+    { chave: 'codigo',        regex: /^C[ÓO]D(IGO)?/ },
+    { chave: 'descricao',     regex: /^DESCRI/ },
+    { chave: 'ncm',           regex: /^NCM/ },
+    { chave: 'cst',           regex: /^(CST|CSOSN|O\/?CST)/ },
+    { chave: 'cfop',          regex: /^CFOP/ },
+    { chave: 'unidade',       regex: /^(UNID|UN)\.?$|^UNIDADE/ },
+    { chave: 'quantidade',    regex: /^(QTD|QTDE|QUANT)/ },
+    { chave: 'valorUnitario', regex: /^(VLR|V\.|VALOR)?\s*UNIT|^UNIT[ÁA]RIO/ },
+    { chave: 'valorTotal',    regex: /^(VLR|V\.|VALOR)?\s*TOTAL/ }
   ];
 
   /**
    * Encontra a faixa da tabela de produtos e converte as linhas em itens,
    * usando a posição X dos rótulos do cabeçalho como limite de coluna.
    */
+  /**
+   * Encontra a faixa da tabela de produtos e converte as linhas em itens.
+   *
+   * Duas coisas tornam isso menos trivial do que parece. Primeiro, TODOS os
+   * tokens do cabeçalho viram fronteira de coluna, inclusive os que não
+   * interessam (B. CALC. ICMS, ALÍQUOTAS): sem isso a última coluna útil
+   * engole todos os números à direita dela. Segundo, a descrição costuma
+   * vir em linha própria, às vezes acima da linha de valores, às vezes
+   * abaixo — por isso a classificação em duas passadas.
+   */
   function extrairItensPdf(linhas, avisos) {
     const idxCab = linhas.findIndex((l) => {
       const t = semAcento(l.texto);
-      return /C[OÓ]DIGO/.test(t) && /DESCRI/.test(t) && /(QUANT|NCM)/.test(t);
+      return /C[OÓ]DIGO/.test(t) && /DESCRI/.test(t) && /(QTD|QUANT|NCM)/.test(t);
     });
     if (idxCab === -1) {
       avisos.push('Não encontrei a tabela de produtos neste PDF. Preencha os itens manualmente.');
       return { itens: [], confianca: 'baixa' };
     }
 
-    // Colunas a partir dos rótulos do cabeçalho.
+    // Toda posição do cabeçalho é fronteira; só algumas têm nome útil.
     const colunas = [];
-    linhas[idxCab].tokens.forEach((tok) => {
+    linhas[idxCab].tokens.forEach((tok, i) => {
       const t = semAcento(tok.str).trim();
       if (!t) return;
       const achou = ROTULOS_COLUNA.find((r) => r.regex.test(t));
-      if (achou && !colunas.some((c) => c.chave === achou.chave)) {
-        colunas.push({ chave: achou.chave, x: tok.x });
-      }
+      const chave = (achou && !colunas.some((c) => c.chave === achou.chave))
+        ? achou.chave
+        : '_' + i;
+      colunas.push({ chave: chave, x: tok.x });
     });
     colunas.sort((a, b) => a.x - b.x);
 
-    if (!colunas.some((c) => c.chave === 'quantidade')) {
+    const temColuna = (c) => colunas.some((x) => x.chave === c);
+    if (!temColuna('quantidade')) {
       avisos.push('O cabeçalho da tabela não traz a coluna de quantidade. Confira item por item.');
     }
 
@@ -340,18 +390,21 @@
       for (let i = 0; i < colunas.length; i++) {
         if (centro >= colunas[i].x - 12 && centro < limite(i)) return colunas[i].chave;
       }
-      return centro < (colunas[0] ? colunas[0].x : 0) ? (colunas[0] || {}).chave : 'valorTotal';
+      return colunas.length ? colunas[0].chave : 'descricao';
     };
 
     const FIM = /(DADOS ADICIONAIS|INFORMA[CÇ][OÕ]ES COMPLEMENTARES|C[AÁ]LCULO DO ISSQN|RESERVADO AO FISCO)/;
-    const itens = [];
-    let parciais = 0;
 
+    // --- passada 1: classifica cada linha em ITEM ou FRAGMENTO ------------
+    const brutas = [];
     for (let i = idxCab + 1; i < linhas.length; i++) {
       const linha = linhas[i];
-      const bruto = semAcento(linha.texto);
-      if (!bruto) continue;
-      if (FIM.test(bruto)) break;
+      const texto = semAcento(linha.texto);
+      if (!texto) continue;
+      if (FIM.test(texto)) break;
+
+      // segunda linha do próprio cabeçalho (PRODUTO / ICMS / IPI soltos)
+      if (/^(PRODUTO|SERVICOS|ICMS|IPI)(\s+(ICMS|IPI|PRODUTO|SERVICOS))*$/.test(texto)) continue;
 
       const celulas = {};
       linha.tokens.forEach((tok) => {
@@ -360,32 +413,64 @@
       });
 
       const temCodigo = (celulas.codigo || '').trim().length > 0;
-      const temQtd = numeroBr(celulas.quantidade) > 0;
+      const temNumeros = numeroBr(celulas.quantidade) > 0
+        || numeroBr(celulas.valorUnitario) > 0
+        || numeroBr(celulas.valorTotal) > 0;
 
-      // linha de continuação da descrição do item anterior
-      if (!temCodigo && !temQtd) {
-        if (itens.length && (celulas.descricao || '').trim()) {
-          itens[itens.length - 1].descricao += ' ' + celulas.descricao.trim();
-        }
-        continue;
+      brutas.push({
+        tipo: (temCodigo || temNumeros) ? 'item' : 'fragmento',
+        celulas: celulas,
+        texto: (celulas.descricao || linha.texto).trim()
+      });
+    }
+
+    // --- passada 2: fragmentos vão para o item que vem depois; se não
+    //     houver, para o item anterior --------------------------------------
+    const itens = [];
+    let pendentes = [];
+    let parciais = 0;
+
+    brutas.forEach((linha, i) => {
+      if (linha.tipo === 'fragmento') {
+        const proximoItem = brutas.slice(i + 1).find((b) => b.tipo === 'item');
+        if (proximoItem) pendentes.push(linha.texto);
+        else if (itens.length) itens[itens.length - 1].descricao += ' ' + linha.texto;
+        return;
       }
 
+      const c = linha.celulas;
       const item = itemVazio();
       item.ordem = itens.length + 1;
-      item.codigoFornecedor = (celulas.codigo || '').replace(/\s+/g, '');
-      item.descricao = (celulas.descricao || '').trim();
-      item.ncm = soDigitos(celulas.ncm || '').slice(0, 8);
-      item.cfop = soDigitos(celulas.cfop || '').slice(0, 4);
-      item.unidade = (celulas.unidade || 'UN').replace(/[^A-Za-z]/g, '').toUpperCase() || 'UN';
-      item.quantidade = numeroBr(celulas.quantidade);
-      item.valorUnitario = numeroBr(celulas.valorUnitario);
-      item.valorProdutos = numeroBr(celulas.valorTotal);
+      item.codigoFornecedor = (c.codigo || '').replace(/\s+/g, '');
+      item.descricao = [pendentes.join(' '), (c.descricao || '').trim()]
+        .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      pendentes = [];
 
+      item.ncm = soDigitos(c.ncm || '').slice(0, 8);
+      item.cfop = soDigitos(c.cfop || '').slice(0, 4);
+      item.unidade = (c.unidade || 'UN').replace(/[^A-Za-z]/g, '').toUpperCase() || 'UN';
+      item.quantidade = numeroBr(c.quantidade);
+      item.valorUnitario = numeroBr(c.valorUnitario);
+      item.valorProdutos = numeroBr(c.valorTotal);
+
+      // completa o que faltar a partir dos outros dois
       if (!item.valorProdutos && item.quantidade && item.valorUnitario) {
         item.valorProdutos = arred(item.quantidade * item.valorUnitario);
       }
+      if (!item.quantidade && item.valorProdutos && item.valorUnitario) {
+        item.quantidade = arred(item.valorProdutos / item.valorUnitario, 4);
+      }
+      if (!item.valorUnitario && item.valorProdutos && item.quantidade) {
+        item.valorUnitario = arred(item.valorProdutos / item.quantidade, 6);
+      }
+
       if (!item.quantidade || !item.descricao) parciais++;
       if (item.quantidade > 0) itens.push(item);
+    });
+
+    // sobrou descrição sem item nenhum
+    if (pendentes.length && itens.length) {
+      itens[itens.length - 1].descricao += ' ' + pendentes.join(' ');
     }
 
     if (!itens.length) {
@@ -393,9 +478,57 @@
       return { itens: [], confianca: 'baixa' };
     }
     if (parciais) {
-      avisos.push(`${parciais} linha(s) saíram incompletas da leitura do PDF.`);
+      avisos.push(parciais + ' linha(s) saíram incompletas da leitura do PDF.');
     }
-    return { itens, confianca: parciais ? 'baixa' : 'media' };
+    return { itens: itens, confianca: parciais ? 'baixa' : 'media' };
+  }
+
+  /**
+   * No DANFE os rótulos ficam numa linha e os valores na de baixo, alinhados
+   * por coluna. Lê "VALOR TOTAL DA NOTA" por posição, e não por proximidade
+   * no texto corrido — que erra quando há oito números na mesma faixa.
+   */
+  function totaisPorColuna(linhas) {
+    const ALVOS = [
+      { chave: 'produtos', regex: /VALOR TOTAL DOS PRODUTOS/ },
+      { chave: 'frete',    regex: /VALOR DO FRETE/ },
+      { chave: 'seguro',   regex: /VALOR DO SEGURO/ },
+      { chave: 'desconto', regex: /^DESCONTO/ },
+      { chave: 'outros',   regex: /OUTRAS DESPESAS/ },
+      { chave: 'ipi',      regex: /VALOR DO IPI/ },
+      { chave: 'st',       regex: /VALOR DO ICMS SUBSTITUI/ },
+      { chave: 'nota',     regex: /VALOR TOTAL DA NOTA/ }
+    ];
+    const achados = {};
+
+    linhas.forEach((linha, i) => {
+      const rotulos = linha.tokens
+        .map((t) => ({ x: t.x, w: t.w || 0, texto: semAcento(t.str).trim() }))
+        .filter((t) => t.texto);
+      if (!rotulos.some((r) => ALVOS.some((a) => a.regex.test(r.texto)))) return;
+
+      // primeira linha abaixo com pelo menos dois números
+      let valores = null;
+      for (let j = i + 1; j < Math.min(linhas.length, i + 3); j++) {
+        const nums = linhas[j].tokens.filter((t) => /^[\d.,]+$/.test(t.str.trim()));
+        if (nums.length >= 2) { valores = nums; break; }
+      }
+      if (!valores) return;
+
+      rotulos.forEach((rot, k) => {
+        const alvo = ALVOS.find((a) => a.regex.test(rot.texto));
+        if (!alvo || achados[alvo.chave] != null) return;
+        const inicio = rot.x - 10;
+        const fim = k < rotulos.length - 1 ? rotulos[k + 1].x - 10 : Infinity;
+        const valor = valores.find((v) => {
+          const centro = v.x + (v.w || 0) / 2;
+          return centro >= inicio && centro < fim;
+        });
+        if (valor) achados[alvo.chave] = numeroBr(valor.str);
+      });
+    });
+
+    return achados;
   }
 
   async function lerPdf(file) {
@@ -434,15 +567,15 @@
     let chave = await chavePeloQr(pagina1);
     let origemChave = chave ? 'qr' : '';
     if (!chave) {
+      // linha a linha primeiro: menos ruído que o documento inteiro
       for (const l of linhas) {
-        const d = soDigitos(l.texto);
-        if (d.length === 44 && chaveValida(d)) { chave = d; origemChave = 'texto'; break; }
+        const achada = acharChave(soDigitos(l.texto));
+        if (achada) { chave = achada; origemChave = 'texto'; break; }
       }
     }
     if (!chave) {
-      const m = soDigitos(textoPlano).match(/\d{44}/g) || [];
-      const achada = m.find(chaveValida);
-      if (achada) { chave = achada; origemChave = 'texto'; }
+      chave = acharChave(soDigitos(textoPlano));
+      if (chave) origemChave = 'texto';
     }
 
     const daChave = dadosDaChave(chave);
@@ -473,31 +606,48 @@
       const m = textoPlano.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/);
       return m ? soDigitos(m[0]) : '';
     })();
+    /* O canhoto do DANFE começa com "RECEBEMOS DE <emitente> OS PRODUTOS
+       CONSTANTES...". É a única ocorrência do nome em posição previsível —
+       o bloco do emitente varia demais de layout para layout. */
     let nome = '';
-    const idxIdent = linhas.findIndex((l) => /IDENTIFICA/.test(semAcento(l.texto)));
-    for (let i = 0; i < Math.min(linhas.length, idxIdent > 0 ? idxIdent : 12); i++) {
-      const t = linhas[i].texto.trim();
-      if (t.length > 5 && !/^\d/.test(t) && !/DANFE|DOCUMENTO AUXILIAR|NOTA FISCAL/.test(semAcento(t))) {
-        nome = t; break;
+    const mNome = semAcentoPlano.match(/RECEBEMOS DE\s+(.+?)\s+OS PRODUTOS/);
+    if (mNome) {
+      // recupera o texto original (com acentos) pela posição equivalente
+      const bruto = textoPlano.match(/RECEBEMOS DE\s+(.+?)\s+OS PRODUTOS/i);
+      nome = ((bruto && bruto[1]) || mNome[1]).trim();
+    }
+    if (!nome) {
+      const idxIdent = linhas.findIndex((l) => /IDENTIFICA/.test(semAcento(l.texto)));
+      for (let i = 0; i < Math.min(linhas.length, idxIdent > 0 ? idxIdent : 12); i++) {
+        const t = linhas[i].texto.trim();
+        if (t.length > 5 && !/^\d/.test(t)
+            && !/DANFE|DOCUMENTO AUXILIAR|NOTA FISCAL|RECEBEMOS/.test(semAcento(t))) {
+          nome = t; break;
+        }
       }
     }
 
-    // Totais
+    // Totais: por posição de coluna; texto corrido só como reserva
     const pegar = (rotulo) => {
       const re = new RegExp(rotulo + '[\\s\\S]{0,60}?(\\d{1,3}(?:\\.\\d{3})*,\\d{2})');
       const m = semAcentoPlano.match(re);
       return m ? numeroBr(m[1]) : 0;
     };
+    const porColuna = totaisPorColuna(linhas);
+    const valorDe = (chave, rotulo) =>
+      porColuna[chave] != null ? porColuna[chave] : pegar(rotulo);
+
     const totais = {
-      produtos: pegar('VALOR TOTAL DOS PRODUTOS'),
-      frete: pegar('VALOR DO FRETE'),
-      seguro: pegar('VALOR DO SEGURO'),
-      desconto: pegar('DESCONTO'),
-      outros: pegar('OUTRAS DESPESAS'),
-      ipi: pegar('VALOR DO IPI'),
-      st: pegar('VALOR DO ICMS SUBSTITUI'),
-      nota: pegar('VALOR TOTAL DA NOTA')
+      produtos: valorDe('produtos', 'VALOR TOTAL DOS PRODUTOS'),
+      frete:    valorDe('frete',    'VALOR DO FRETE'),
+      seguro:   valorDe('seguro',   'VALOR DO SEGURO'),
+      desconto: valorDe('desconto', 'DESCONTO'),
+      outros:   valorDe('outros',   'OUTRAS DESPESAS'),
+      ipi:      valorDe('ipi',      'VALOR DO IPI'),
+      st:       valorDe('st',       'VALOR DO ICMS SUBSTITUI'),
+      nota:     valorDe('nota',     'VALOR TOTAL DA NOTA')
     };
+    if (!totais.nota && totais.produtos) totais.nota = totais.produtos;
 
     const { itens, confianca } = extrairItensPdf(linhas, avisos);
     if (itens.length) {
@@ -600,6 +750,7 @@
     numeroBr,
     soDigitos,
     chaveValida,
+    chavePlausivel,
     dadosDaChave,
     arred,
     calcularCusto,

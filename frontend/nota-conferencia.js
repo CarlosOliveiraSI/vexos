@@ -30,6 +30,48 @@
   function configurar(opcoes) { Object.assign(cfg, opcoes || {}); }
 
   // ------------------------------------------------------------------
+  // Mensagens — no padrão da tela, nunca alert() do navegador
+  // ------------------------------------------------------------------
+
+  /* Fora do modal: usa a faixa de aviso que a página já tem. */
+  function avisarTela(texto, tipo) {
+    const alvo = document.getElementById('msg2') || document.getElementById('msg');
+    if (alvo && typeof aviso === 'function') {
+      aviso(alvo, texto, tipo || 'erro');
+      alvo.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      if (tipo === 'ok') setTimeout(() => aviso(alvo, ''), 5000);
+      return;
+    }
+    console.warn('[nota]', texto);
+  }
+
+  /* Dentro do modal: faixa no topo, acima do cabeçalho da nota. */
+  function avisarModal(texto, tipo) {
+    if (!raiz) return avisarTela(texto, tipo);
+    const modal = raiz.querySelector('.nc-modal');
+    if (!modal) return avisarTela(texto, tipo);
+
+    let faixa = modal.querySelector('.nc-mensagem');
+    if (!faixa) {
+      faixa = document.createElement('div');
+      faixa.className = 'nc-mensagem';
+      modal.querySelector('.nc-topo').insertAdjacentElement('afterend', faixa);
+    }
+    faixa.className = 'nc-mensagem nc-mensagem-' + (tipo || 'erro');
+    faixa.textContent = texto;
+    faixa.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  const STATUS = { rascunho: 'está como rascunho', lancada: 'já foi lançada',
+                   cancelada: 'foi cancelada' };
+
+  function dataBr(iso) {
+    if (!iso) return '';
+    const p = String(iso).slice(0, 10).split('-');
+    return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : '';
+  }
+
+  // ------------------------------------------------------------------
   // Consultas — tudo via Banco (PostgREST direto)
   // ------------------------------------------------------------------
   async function notaJaExiste(chave) {
@@ -302,7 +344,7 @@
             estado.itens[idx].vinculo = 'nova';
             render();
           } catch (e) {
-            alert('Não foi possível cadastrar a peça: ' + e.message);
+            avisarModal('Não foi possível cadastrar a peça: ' + e.message);
             btn.disabled = false;
           }
           return;
@@ -468,11 +510,11 @@
       if (typeof cfg.aoConcluir === 'function') cfg.aoConcluir(compra, lancar);
     } catch (e) {
       const dup = /duplicate key|compras_chave_uk/i.test(e.message || '');
-      alert(dup
-        ? 'Esta nota já está no sistema.'
+      avisarModal(dup
+        ? 'Esta nota já está no sistema. Feche e procure pelo número na lista.'
         : (lancar ? 'Não foi possível lançar: ' : 'Não foi possível salvar: ')
           + e.message
-          + (compra ? '\n\nA nota ficou salva como rascunho e pode ser aberta na lista.' : ''));
+          + (compra ? ' A nota ficou salva como rascunho e aparece na lista.' : ''));
       botao.disabled = false;
       botao.textContent = textoOriginal;
     }
@@ -487,7 +529,14 @@
     if (nota.chave) {
       const jaTem = await notaJaExiste(nota.chave);
       if (jaTem) {
-        alert(`Esta nota já está no sistema (nº ${jaTem.numero || '—'}, ${jaTem.status}).`);
+        const emissao = dataBr(jaTem.emitida_em);
+        avisarTela(
+          `A nota ${jaTem.numero || 'sem número'}` +
+          (nota.fornecedor.nome ? ` de ${nota.fornecedor.nome}` : '') +
+          (emissao ? `, emitida em ${emissao},` : '') +
+          ` ${STATUS[jaTem.status] || 'já está no sistema'}. ` +
+          'Nada foi importado — procure por ela na lista de notas.',
+          'info');
         return;
       }
     }
@@ -540,11 +589,11 @@
             console.info(`${notas.length - 1} nota(s) restante(s) — importe uma por vez.`);
           }
         } else {
-          alert('Não consegui ler o arquivo' +
-                (erros.length ? ': ' + erros[0].mensagem : '.'));
+          avisarTela('Não consegui ler o arquivo' +
+                     (erros.length ? ': ' + erros[0].mensagem : '.'));
         }
       } catch (e) {
-        alert('Não consegui ler o arquivo: ' + e.message);
+        avisarTela('Não consegui ler o arquivo: ' + e.message);
       } finally {
         input.value = '';
       }
