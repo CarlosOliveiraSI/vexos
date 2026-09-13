@@ -1,24 +1,21 @@
 /* =====================================================================
- * VexOS — nota-conferencia.js
- * Tela de conferência da nota importada: vincula cada item a uma peça do
- * catálogo, confere os totais e grava/lança no estoque.
+ * VexOS — nota-conferencia.js  (v2 — adaptado ao VexOS real)
  *
- * Depende de nota-import.js e de um client Supabase já autenticado.
+ * Mudou em relação à v1: não usa supabase-js. Fala pelo objeto `Banco`
+ * do app.js e grava nas tabelas que já existem — compras, compra_itens,
+ * pecas — chamando lancar_compra() para o lançamento.
  *
- * Configuração (uma vez, no carregamento da tela de estoque):
+ * Uso na compras.html, depois de `contexto` estar pronto:
  *   NotaConferencia.configurar({
- *     sb: supabase,                  // client já logado
- *     oficinaId: '...',              // uuid da oficina do usuário
- *     aoConcluir: (nota) => {...}    // callback após salvar/lançar
+ *     oficinaId: contexto.oficina_id,
+ *     aoConcluir: (compra, lancada) => { ... }
  *   });
- *
- * Abertura:
- *   NotaConferencia.abrir(notaLida)  // objeto vindo de NotaImport.ler()
+ *   NotaConferencia.ligarInput(document.getElementById('arquivo-nota'));
  * ===================================================================== */
 (function (global) {
   'use strict';
 
-  const cfg = { sb: null, oficinaId: null, aoConcluir: null };
+  const cfg = { oficinaId: null, aoConcluir: null };
   let estado = null;
   let raiz = null;
 
@@ -30,85 +27,54 @@
     String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  function configurar(opcoes) {
-    Object.assign(cfg, opcoes || {});
-  }
+  function configurar(opcoes) { Object.assign(cfg, opcoes || {}); }
 
   // ------------------------------------------------------------------
-  // Consultas ao Supabase
+  // Consultas — tudo via Banco (PostgREST direto)
   // ------------------------------------------------------------------
-  async function acharFornecedor(cnpj, nome) {
-    if (!cnpj && !nome) return null;
-    let q = cfg.sb.from('fornecedores').select('*').limit(1);
-    q = cnpj ? q.eq('cnpj', cnpj) : q.ilike('nome', nome);
-    const { data, error } = await q;
-    if (error) throw error;
-    return (data && data[0]) || null;
-  }
-
-  async function garantirFornecedor(dados) {
-    const existente = await acharFornecedor(dados.cnpj, dados.nome);
-    if (existente) return existente;
-    const { data, error } = await cfg.sb
-      .from('fornecedores')
-      .insert({
-        oficina_id: cfg.oficinaId,
-        cnpj: dados.cnpj || null,
-        nome: dados.nome || 'Fornecedor sem nome',
-        nome_fantasia: dados.fantasia || null,
-        inscricao_est: dados.ie || null
-      })
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
-  }
-
   async function notaJaExiste(chave) {
     if (!chave) return null;
-    const { data, error } = await cfg.sb
-      .from('notas_compra')
-      .select('id, numero, status, emissao')
-      .eq('chave_acesso', chave)
-      .limit(1);
-    if (error) throw error;
-    return (data && data[0]) || null;
+    const r = await Banco.listar('compras',
+      `chave_acesso=eq.${chave}&select=id,numero,status,emitida_em&limit=1`);
+    return (r && r[0]) || null;
   }
 
-  /** Resolve o vínculo de cada item: de-para → EAN → nome aproximado. */
-  async function resolverVinculos(itens, fornecedorId) {
-    const codigos = itens.map((i) => i.codigoFornecedor).filter(Boolean);
-    const eans = itens.map((i) => i.ean).filter(Boolean);
+  const listaIn = (valores) =>
+    valores.map((c) => '"' + String(c).replace(/"/g, '') + '"').join(',');
 
+  async function resolverVinculos(itens, cnpj) {
+    const codigos = itens.map((i) => i.codigoFornecedor).filter(Boolean);
+
+    // 1) de-para aprendido em importações anteriores deste fornecedor
     let dePara = [];
-    if (fornecedorId && codigos.length) {
-      const { data } = await cfg.sb
-        .from('fornecedor_peca_codigo')
-        .select('codigo_fornecedor, peca_id, fator_conversao, pecas(id, codigo, nome, unidade)')
-        .eq('fornecedor_id', fornecedorId)
-        .in('codigo_fornecedor', codigos);
-      dePara = data || [];
+    if (cnpj && codigos.length) {
+      dePara = await Banco.listar('fornecedor_peca_codigo',
+        `fornecedor_cnpj=eq.${cnpj}&codigo_fornecedor=in.(${listaIn(codigos)})` +
+        '&select=codigo_fornecedor,peca_id,fator_conversao,pecas(id,numero,nome,unidade)') || [];
     }
 
-    let porEan = [];
-    if (eans.length) {
-      const { data } = await cfg.sb
-        .from('pecas')
-        .select('id, codigo, nome, unidade, codigo_barras')
-        .in('codigo_barras', eans);
-      porEan = data || [];
+    // 2) código do fornecedor igual ao código cadastrado na peça
+    let porCodigo = [];
+    if (codigos.length) {
+      porCodigo = await Banco.listar('pecas',
+        `codigo=in.(${listaIn(codigos)})&ativo=is.true` +
+        '&select=id,numero,nome,unidade,codigo') || [];
     }
 
     itens.forEach((item) => {
       const v = dePara.find((d) => d.codigo_fornecedor === item.codigoFornecedor);
-      if (v && v.pecas) {
-        item.peca = v.pecas;
-        item.fatorConversao = Number(v.fator_conversao) || 1;
-        item.vinculo = 'codigo';
-        return;
+      if (v) {
+        const p = Array.isArray(v.pecas) ? v.pecas[0] : v.pecas;
+        if (p) {
+          item.peca = p;
+          item.fatorConversao = Number(v.fator_conversao) || 1;
+          item.vinculo = 'codigo';
+          return;
+        }
       }
-      const e = item.ean && porEan.find((p) => p.codigo_barras === item.ean);
-      if (e) { item.peca = e; item.vinculo = 'ean'; return; }
+      const c = item.codigoFornecedor
+        && porCodigo.find((p) => p.codigo === item.codigoFornecedor);
+      if (c) { item.peca = c; item.vinculo = 'catalogo'; return; }
       item.peca = null;
       item.vinculo = 'pendente';
     });
@@ -117,43 +83,26 @@
 
   async function buscarPecas(termo) {
     if (!termo || termo.length < 2) return [];
-    const { data, error } = await cfg.sb
-      .from('pecas')
-      .select('id, codigo, nome, unidade, saldo')
-      .or(`nome.ilike.%${termo}%,codigo.ilike.%${termo}%`)
-      .limit(12);
-    if (error) throw error;
-    return data || [];
+    const t = encodeURIComponent('*' + termo + '*');
+    const r = await Banco.listar('pecas',
+      `or=(nome.ilike.${t},codigo.ilike.${t},numero.ilike.${t})` +
+      '&ativo=is.true&select=id,numero,nome,unidade,saldo&limit=12');
+    return r || [];
   }
 
   async function criarPeca(item) {
-    const { data, error } = await cfg.sb
-      .from('pecas')
-      .insert({
-        oficina_id: cfg.oficinaId,
-        codigo: item.codigoFornecedor || null,
-        nome: item.descricao,
-        unidade: item.unidade || 'UN',
-        codigo_barras: item.ean || null,
-        saldo: 0,
-        custo_medio: item.custoUnitario
-      })
-      .select('id, codigo, nome, unidade')
-      .single();
-    if (error) throw error;
-    return data;
+    return await Banco.criar('pecas', {
+      oficina_id: cfg.oficinaId,
+      nome: item.descricao.slice(0, 120),
+      codigo: item.codigoFornecedor || null,
+      unidade: (item.unidade || 'un').toLowerCase(),
+      preco_custo: Number(item.custoUnitario.toFixed(4))
+    });
   }
 
   // ------------------------------------------------------------------
-  // Cálculos de conferência
+  // Conferência
   // ------------------------------------------------------------------
-  function somaItens() {
-    return estado.itens.reduce(
-      (s, i) => s + i.custoUnitario * i.quantidade * (i.fatorConversao || 1) / (i.fatorConversao || 1),
-      0
-    );
-  }
-
   function diferenca() {
     const soma = estado.itens.reduce((s, i) => s + i.custoUnitario * i.quantidade, 0);
     return NotaImport.arred((estado.totais.nota || 0) - soma, 2);
@@ -161,12 +110,13 @@
 
   function pendencias() {
     const lista = [];
-    const semVinculo = estado.itens.filter((i) => !i.peca).length;
-    if (semVinculo) lista.push(`${semVinculo} item(ns) sem peça vinculada`);
+    if (!estado.itens.length) lista.push('nenhum item');
+    const sem = estado.itens.filter((i) => !i.peca).length;
+    if (sem) lista.push(`${sem} item(ns) sem peça vinculada`);
     if (Math.abs(diferenca()) > 0.05 && !estado.divergenciaAceita) {
-      lista.push(`soma dos itens difere do total da nota em ${moeda(Math.abs(diferenca()))}`);
+      lista.push(`soma difere do total em ${moeda(Math.abs(diferenca()))}`);
     }
-    if (!estado.fornecedor) lista.push('fornecedor não identificado');
+    if (!estado.fornecedorNome) lista.push('fornecedor em branco');
     if (!estado.emissao) lista.push('data de emissão em branco');
     return lista;
   }
@@ -177,16 +127,14 @@
   function linhaItem(item, idx) {
     const rotulo = {
       codigo: 'vinculada pelo código do fornecedor',
-      ean: 'vinculada pelo código de barras',
+      catalogo: 'código igual ao do seu catálogo',
       manual: 'vinculada agora',
-      nova: 'peça nova',
-      pendente: 'escolha a peça'
+      nova: 'peça criada agora',
+      pendente: ''
     }[item.vinculo] || '';
 
-    const classe = item.peca ? 'nc-ok' : 'nc-pendente';
-
     return `
-      <tr class="${classe}" data-idx="${idx}">
+      <tr class="${item.peca ? 'nc-ok' : 'nc-pendente'}" data-idx="${idx}">
         <td class="nc-col-origem">
           <div class="nc-desc">${esc(item.descricao)}</div>
           <div class="nc-meta">
@@ -199,21 +147,20 @@
           ${item.peca
             ? `<button type="button" class="nc-peca-sel" data-acao="trocar">
                  <span>${esc(item.peca.nome)}</span>
-                 <small>${esc(rotulo)}</small>
+                 <small>${item.peca.numero ? '#' + esc(item.peca.numero) + ' · ' : ''}${esc(rotulo)}</small>
                </button>`
             : `<input type="text" class="nc-busca" data-acao="buscar"
-                      placeholder="buscar peça pelo nome ou código"
-                      autocomplete="off" value="">
+                      placeholder="buscar peça pelo nome, código ou número" autocomplete="off">
                <div class="nc-sugestoes" hidden></div>
-               <button type="button" class="nc-link" data-acao="criar">criar peça nova</button>`}
+               <button type="button" class="nc-link" data-acao="criar">cadastrar como peça nova</button>`}
         </td>
         <td class="nc-col-num">
-          <input type="number" step="0.0001" min="0.0001" class="nc-inp nc-qtd"
+          <input type="number" step="0.0001" min="0.0001" class="nc-inp"
                  value="${item.quantidade}" data-campo="quantidade">
           <span class="nc-un">${esc(item.unidade)}</span>
         </td>
         <td class="nc-col-num">
-          <input type="number" step="0.0001" min="0.0001" class="nc-inp nc-fator"
+          <input type="number" step="0.0001" min="0.0001" class="nc-inp"
                  value="${item.fatorConversao || 1}" data-campo="fatorConversao"
                  title="Quantas unidades do seu estoque cabem em 1 ${esc(item.unidade)}">
         </td>
@@ -222,7 +169,7 @@
           <strong>${qtd(item.quantidade * (item.fatorConversao || 1))}</strong>
         </td>
         <td class="nc-col-acao">
-          <button type="button" class="nc-remover" data-acao="remover" title="Remover item">×</button>
+          <button type="button" class="nc-remover" data-acao="remover" title="Remover">×</button>
         </td>
       </tr>`;
   }
@@ -230,7 +177,6 @@
   function render() {
     const dif = diferenca();
     const pend = pendencias();
-    const conf = estado.confianca.itens;
 
     raiz.innerHTML = `
       <div class="nc-overlay">
@@ -246,15 +192,13 @@
             <button type="button" class="nc-fechar" data-acao="fechar" aria-label="Fechar">×</button>
           </header>
 
-          ${conf === 'baixa' ? `
+          ${estado.confianca.itens === 'baixa' ? `
             <div class="nc-alerta nc-alerta-forte">
               A leitura dos itens ficou incompleta. Complete o que faltar antes de lançar.
             </div>` : ''}
 
           ${estado.avisos.length ? `
-            <ul class="nc-avisos">
-              ${estado.avisos.map((a) => `<li>${esc(a)}</li>`).join('')}
-            </ul>` : ''}
+            <ul class="nc-avisos">${estado.avisos.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}
 
           <section class="nc-cabecalho">
             <label>Fornecedor
@@ -270,28 +214,18 @@
               <input type="date" id="nc-emissao" value="${esc(estado.emissao)}">
             </label>
             ${estado.chave ? `
-              <div class="nc-chave">
-                <span>Chave de acesso</span>
-                <code>${esc(estado.chave)}</code>
-              </div>` : ''}
+              <div class="nc-chave"><span>Chave de acesso</span><code>${esc(estado.chave)}</code></div>` : ''}
           </section>
 
           <div class="nc-tabela-wrap">
             <table class="nc-tabela">
               <thead>
                 <tr>
-                  <th>Item da nota</th>
-                  <th>Peça no seu estoque</th>
-                  <th>Qtd</th>
-                  <th>Fator</th>
-                  <th>Custo un.</th>
-                  <th>Entra</th>
-                  <th></th>
+                  <th>Item da nota</th><th>Peça no seu estoque</th><th>Qtd</th>
+                  <th>Fator</th><th>Custo un.</th><th>Entra</th><th></th>
                 </tr>
               </thead>
-              <tbody>
-                ${estado.itens.map(linhaItem).join('')}
-              </tbody>
+              <tbody>${estado.itens.map(linhaItem).join('')}</tbody>
             </table>
           </div>
 
@@ -300,13 +234,9 @@
               <span>Soma dos itens</span>
               <strong>${moeda(estado.itens.reduce((s, i) => s + i.custoUnitario * i.quantidade, 0))}</strong>
             </div>
-            <div>
-              <span>Total da nota</span>
-              <strong>${moeda(estado.totais.nota)}</strong>
-            </div>
+            <div><span>Total da nota</span><strong>${moeda(estado.totais.nota)}</strong></div>
             <div class="${Math.abs(dif) > 0.05 ? 'nc-dif' : 'nc-dif-ok'}">
-              <span>Diferença</span>
-              <strong>${moeda(dif)}</strong>
+              <span>Diferença</span><strong>${moeda(dif)}</strong>
             </div>
           </section>
 
@@ -322,11 +252,10 @@
               : 'Tudo conferido.'}</p>
             <div class="nc-botoes">
               <button type="button" class="nc-btn" data-acao="fechar">Cancelar</button>
-              <button type="button" class="nc-btn" data-acao="rascunho">Salvar rascunho</button>
+              <button type="button" class="nc-btn" data-acao="rascunho"
+                      ${estado.itens.some((i) => !i.peca) ? 'disabled' : ''}>Salvar rascunho</button>
               <button type="button" class="nc-btn nc-btn-primario"
-                      data-acao="lancar" ${pend.length ? 'disabled' : ''}>
-                Lançar no estoque
-              </button>
+                      data-acao="lancar" ${pend.length ? 'disabled' : ''}>Lançar no estoque</button>
             </div>
           </footer>
         </div>
@@ -341,22 +270,16 @@
   function ligarEventos() {
     const modal = raiz.querySelector('.nc-modal');
 
-    raiz.querySelectorAll('[data-acao="fechar"]').forEach((b) =>
-      b.addEventListener('click', fechar));
-
     const aceita = raiz.querySelector('#nc-aceita');
     if (aceita) aceita.addEventListener('change', (e) => {
       estado.divergenciaAceita = e.target.checked;
       render();
     });
 
-    ['fornecedor', 'numero', 'serie', 'emissao'].forEach((campo) => {
-      const el = raiz.querySelector('#nc-' + campo);
-      if (!el) return;
-      el.addEventListener('change', () => {
-        if (campo === 'fornecedor') estado.fornecedorNome = el.value;
-        else estado[campo] = el.value;
-      });
+    [['fornecedor', 'fornecedorNome'], ['numero', 'numero'],
+     ['serie', 'serie'], ['emissao', 'emissao']].forEach(([id, campo]) => {
+      const el = raiz.querySelector('#nc-' + id);
+      if (el) el.addEventListener('change', () => { estado[campo] = el.value; });
     });
 
     modal.addEventListener('click', async (ev) => {
@@ -364,34 +287,30 @@
       if (!btn) return;
       const tr = btn.closest('tr');
       const idx = tr ? Number(tr.dataset.idx) : -1;
-      const acao = btn.dataset.acao;
 
-      if (acao === 'remover') {
-        estado.itens.splice(idx, 1);
-        return render();
+      switch (btn.dataset.acao) {
+        case 'fechar':  return fechar();
+        case 'remover': estado.itens.splice(idx, 1); return render();
+        case 'trocar':
+          estado.itens[idx].peca = null;
+          estado.itens[idx].vinculo = 'pendente';
+          return render();
+        case 'criar':
+          btn.disabled = true;
+          try {
+            estado.itens[idx].peca = await criarPeca(estado.itens[idx]);
+            estado.itens[idx].vinculo = 'nova';
+            render();
+          } catch (e) {
+            alert('Não foi possível cadastrar a peça: ' + e.message);
+            btn.disabled = false;
+          }
+          return;
+        case 'rascunho': return salvar(false, btn);
+        case 'lancar':   return salvar(true, btn);
       }
-      if (acao === 'trocar') {
-        estado.itens[idx].peca = null;
-        estado.itens[idx].vinculo = 'pendente';
-        return render();
-      }
-      if (acao === 'criar') {
-        btn.disabled = true;
-        try {
-          const peca = await criarPeca(estado.itens[idx]);
-          estado.itens[idx].peca = peca;
-          estado.itens[idx].vinculo = 'nova';
-          render();
-        } catch (e) {
-          alert('Não foi possível criar a peça: ' + e.message);
-          btn.disabled = false;
-        }
-      }
-      if (acao === 'rascunho') return salvar(false, btn);
-      if (acao === 'lancar') return salvar(true, btn);
     });
 
-    // Busca de peça com debounce
     modal.querySelectorAll('.nc-busca').forEach((input) => {
       let timer;
       const caixa = input.parentElement.querySelector('.nc-sugestoes');
@@ -400,30 +319,27 @@
       input.addEventListener('input', () => {
         clearTimeout(timer);
         timer = setTimeout(async () => {
-          const lista = await buscarPecas(input.value.trim());
+          let lista = [];
+          try { lista = await buscarPecas(input.value.trim()); } catch (e) { return; }
           if (!lista.length) { caixa.hidden = true; return; }
           caixa.innerHTML = lista.map((p) =>
             `<button type="button" data-id="${p.id}">
                <span>${esc(p.nome)}</span>
-               <small>${esc(p.codigo || '')} · saldo ${qtd(p.saldo)}</small>
+               <small>${p.numero ? '#' + esc(p.numero) + ' · ' : ''}saldo ${qtd(p.saldo)}</small>
              </button>`).join('');
           caixa.hidden = false;
+          // mousedown, e não click: o blur do input fecharia a caixa antes
           caixa.querySelectorAll('button').forEach((b) =>
-            b.addEventListener('click', () => {
-              const p = lista.find((x) => x.id === b.dataset.id);
-              estado.itens[idx].peca = p;
+            b.addEventListener('mousedown', () => {
+              estado.itens[idx].peca = lista.find((x) => x.id === b.dataset.id);
               estado.itens[idx].vinculo = 'manual';
               render();
             }));
         }, 280);
       });
-      input.addEventListener('blur', () => setTimeout(() => { caixa.hidden = true; }, 180));
-
-      // pré-preenche a busca com a descrição da nota
-      if (!input.value) input.value = '';
+      input.addEventListener('blur', () => setTimeout(() => { caixa.hidden = true; }, 200));
     });
 
-    // Edição de quantidade e fator
     modal.querySelectorAll('.nc-inp').forEach((inp) => {
       inp.addEventListener('change', () => {
         const idx = Number(inp.closest('tr').dataset.idx);
@@ -448,119 +364,117 @@
   }
 
   // ------------------------------------------------------------------
+  // Arquivo original no Storage (comprovante para a contabilidade)
+  // ------------------------------------------------------------------
+  async function enviarArquivo(compraId) {
+    if (!estado.arquivo) return null;
+    try {
+      const token = await Sessao.token();
+      if (!token) return null;
+      const ext = estado.origem === 'xml' ? 'xml' : 'pdf';
+      const caminho = `${cfg.oficinaId}/${compraId}.${ext}`;
+      const r = await fetch(
+        `${VEXOS.url}/storage/v1/object/notas-fiscais/${caminho}`, {
+          method: 'POST',
+          headers: {
+            apikey: VEXOS.chave,
+            Authorization: 'Bearer ' + token,
+            'x-upsert': 'true'
+          },
+          body: estado.arquivo
+        });
+      return r.ok ? caminho : null;
+    } catch (e) {
+      return null;  // desejável, não obrigatório
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Gravação
   // ------------------------------------------------------------------
   async function salvar(lancar, botao) {
-    const original = botao.textContent;
+    const textoOriginal = botao.textContent;
     botao.disabled = true;
     botao.textContent = lancar ? 'Lançando…' : 'Salvando…';
 
+    let compra = null;
     try {
-      const fornecedor = await garantirFornecedor({
-        cnpj: estado.fornecedorCnpj,
-        nome: estado.fornecedorNome,
-        fantasia: estado.fornecedorFantasia,
-        ie: estado.fornecedorIe
+      compra = await Banco.criar('compras', {
+        oficina_id: cfg.oficinaId,
+        fornecedor: estado.fornecedorNome || null,
+        fornecedor_cnpj: estado.fornecedorCnpj || null,
+        numero: estado.numero || null,
+        serie: estado.serie || null,
+        chave_acesso: estado.chave || null,
+        emitida_em: estado.emissao || null,
+        origem: estado.origem,
+        valor_produtos: estado.totais.produtos || null,
+        valor_frete: estado.totais.frete || null,
+        valor_desconto: estado.totais.desconto || null,
+        valor_ipi: estado.totais.ipi || null,
+        valor_st: estado.totais.st || null,
+        valor_total: estado.totais.nota || null
       });
 
-      const { data: nota, error: e1 } = await cfg.sb
-        .from('notas_compra')
-        .insert({
-          oficina_id: cfg.oficinaId,
-          fornecedor_id: fornecedor.id,
-          numero: estado.numero || null,
-          serie: estado.serie || null,
-          chave_acesso: estado.chave || null,
-          emissao: estado.emissao || null,
-          origem: estado.origem,
-          valor_produtos: estado.totais.produtos,
-          valor_frete: estado.totais.frete,
-          valor_seguro: estado.totais.seguro,
-          valor_desconto: estado.totais.desconto,
-          valor_outros: estado.totais.outros,
-          valor_ipi: estado.totais.ipi,
-          valor_st: estado.totais.st,
-          valor_total: estado.totais.nota,
-          arquivo_tipo: estado.origem
-        })
-        .select()
-        .single();
-
-      if (e1) {
-        if (e1.code === '23505') throw new Error('Esta nota já foi lançada no estoque.');
-        throw e1;
+      for (let i = 0; i < estado.itens.length; i++) {
+        const it = estado.itens[i];
+        const fator = it.fatorConversao || 1;
+        await Banco.criar('compra_itens', {
+          compra_id: compra.id,
+          peca_id: it.peca.id,
+          // quantidade e custo já convertidos para a unidade do seu estoque
+          quantidade: Number((it.quantidade * fator).toFixed(4)),
+          custo_unit: Number((it.custoUnitario / fator).toFixed(4)),
+          ordem: i
+        });
       }
 
-      const itens = estado.itens.map((i, n) => ({
-        nota_id: nota.id,
-        oficina_id: cfg.oficinaId,
-        peca_id: i.peca ? i.peca.id : null,
-        ordem: n + 1,
-        codigo_fornecedor: i.codigoFornecedor || null,
-        ean: i.ean || null,
-        descricao_origem: i.descricao,
-        ncm: i.ncm || null,
-        cfop: i.cfop || null,
-        unidade_comercial: i.unidade || null,
-        fator_conversao: i.fatorConversao || 1,
-        quantidade: i.quantidade,
-        valor_unitario: i.valorUnitario,
-        valor_produtos: i.valorProdutos,
-        valor_frete: i.frete,
-        valor_seguro: i.seguro,
-        valor_desconto: i.desconto,
-        valor_outros: i.outros,
-        valor_ipi: i.ipi,
-        valor_st: i.st,
-        custo_unitario: i.custoUnitario
-      }));
-
-      const { error: e2 } = await cfg.sb.from('notas_compra_itens').insert(itens);
-      if (e2) throw e2;
-
-      // Guarda o de-para para as próximas notas deste fornecedor
-      const vinculos = estado.itens
-        .filter((i) => i.peca && i.codigoFornecedor)
-        .map((i) => ({
-          oficina_id: cfg.oficinaId,
-          fornecedor_id: fornecedor.id,
-          codigo_fornecedor: i.codigoFornecedor,
-          peca_id: i.peca.id,
-          unidade_comercial: i.unidade || null,
-          fator_conversao: i.fatorConversao || 1,
-          descricao_origem: i.descricao,
-          atualizado_em: new Date().toISOString()
-        }));
-      if (vinculos.length) {
-        await cfg.sb.from('fornecedor_peca_codigo')
-          .upsert(vinculos, { onConflict: 'fornecedor_id,codigo_fornecedor' });
-      }
-
-      // Arquivo original no Storage
-      if (estado.arquivo) {
-        const ext = estado.origem === 'xml' ? 'xml' : 'pdf';
-        const caminho = `${cfg.oficinaId}/${nota.id}.${ext}`;
-        const { error: e3 } = await cfg.sb.storage
-          .from('notas-fiscais')
-          .upload(caminho, estado.arquivo, { upsert: true });
-        if (!e3) {
-          await cfg.sb.from('notas_compra')
-            .update({ arquivo_path: caminho })
-            .eq('id', nota.id);
+      // de-para, para as próximas notas deste fornecedor
+      if (estado.fornecedorCnpj) {
+        const vinculos = estado.itens
+          .filter((i) => i.peca && i.codigoFornecedor)
+          .map((i) => ({
+            oficina_id: cfg.oficinaId,
+            fornecedor_cnpj: estado.fornecedorCnpj,
+            codigo_fornecedor: i.codigoFornecedor,
+            peca_id: i.peca.id,
+            unidade_comercial: i.unidade || null,
+            fator_conversao: i.fatorConversao || 1,
+            descricao_origem: i.descricao,
+            atualizado_em: new Date().toISOString()
+          }));
+        if (vinculos.length) {
+          try {
+            await Banco.pedir('/rest/v1/fornecedor_peca_codigo', {
+              metodo: 'POST',
+              corpo: vinculos,
+              headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
+            });
+          } catch (e) { /* conveniência: não trava o lançamento */ }
         }
       }
 
+      const caminho = await enviarArquivo(compra.id);
+      if (caminho) {
+        try { await Banco.atualizar('compras', compra.id, { arquivo_path: caminho }); }
+        catch (e) {}
+      }
+
       if (lancar) {
-        const { error: e4 } = await cfg.sb.rpc('lancar_nota_compra', { p_nota: nota.id });
-        if (e4) throw e4;
+        await Banco.chamar('lancar_compra', { p_compra_id: compra.id });
       }
 
       fechar();
-      if (typeof cfg.aoConcluir === 'function') cfg.aoConcluir(nota, lancar);
+      if (typeof cfg.aoConcluir === 'function') cfg.aoConcluir(compra, lancar);
     } catch (e) {
-      alert((lancar ? 'Não foi possível lançar a nota: ' : 'Não foi possível salvar: ') + e.message);
+      const dup = /duplicate key|compras_chave_uk/i.test(e.message || '');
+      alert(dup
+        ? 'Esta nota já está no sistema.'
+        : (lancar ? 'Não foi possível lançar: ' : 'Não foi possível salvar: ')
+          + e.message
+          + (compra ? '\n\nA nota ficou salva como rascunho e pode ser aberta na lista.' : ''));
       botao.disabled = false;
-      botao.textContent = original;
+      botao.textContent = textoOriginal;
     }
   }
 
@@ -568,24 +482,22 @@
   // Abertura
   // ------------------------------------------------------------------
   async function abrir(nota, arquivo) {
-    if (!cfg.sb) throw new Error('NotaConferencia.configurar() não foi chamado.');
+    if (!cfg.oficinaId) throw new Error('NotaConferencia.configurar() não foi chamado.');
 
-    const duplicada = await notaJaExiste(nota.chave);
-    if (duplicada) {
-      alert(`Esta nota já está no sistema (nº ${duplicada.numero || '—'}, ${duplicada.status}).`);
-      return;
+    if (nota.chave) {
+      const jaTem = await notaJaExiste(nota.chave);
+      if (jaTem) {
+        alert(`Esta nota já está no sistema (nº ${jaTem.numero || '—'}, ${jaTem.status}).`);
+        return;
+      }
     }
 
-    const fornecedor = await acharFornecedor(nota.fornecedor.cnpj, nota.fornecedor.nome);
     const itens = await resolverVinculos(
-      nota.itens.map((i) => Object.assign({}, i)),
-      fornecedor ? fornecedor.id : null
-    );
+      nota.itens.map((i) => Object.assign({}, i)), nota.fornecedor.cnpj);
 
-    // fator sugerido pela unidade tributável do XML
     itens.forEach((i) => {
       if (!i.fatorConversao || i.fatorConversao === 1) {
-        i.fatorConversao = i.fatorSugerido && i.fatorSugerido > 1 ? i.fatorSugerido : 1;
+        i.fatorConversao = (i.fatorSugerido && i.fatorSugerido > 1) ? i.fatorSugerido : 1;
       }
     });
 
@@ -595,14 +507,11 @@
       numero: nota.numero || '',
       serie: nota.serie || '',
       emissao: nota.emissao || new Date().toISOString().slice(0, 10),
-      fornecedor: fornecedor,
-      fornecedorCnpj: nota.fornecedor.cnpj,
-      fornecedorNome: (fornecedor && fornecedor.nome) || nota.fornecedor.nome || '',
-      fornecedorFantasia: nota.fornecedor.fantasia,
-      fornecedorIe: nota.fornecedor.ie,
+      fornecedorCnpj: nota.fornecedor.cnpj || '',
+      fornecedorNome: nota.fornecedor.nome || '',
       totais: nota.totais,
       confianca: nota.confianca,
-      avisos: nota.avisos || [],
+      avisos: (nota.avisos || []).slice(),
       itens,
       arquivo: arquivo || null,
       divergenciaAceita: false
@@ -617,7 +526,6 @@
     render();
   }
 
-  /** Liga um <input type="file"> ao fluxo completo. */
   function ligarInput(input, aoErro) {
     input.addEventListener('change', async () => {
       const arquivos = Array.from(input.files || []);
@@ -625,13 +533,15 @@
       try {
         const { notas, erros } = await NotaImport.ler(arquivos);
         if (erros.length && typeof aoErro === 'function') aoErro(erros);
-        for (const n of notas) {
-          const arq = arquivos.find((a) => a.name === n.arquivoNome) || arquivos[0];
-          await abrir(n, arq);
-          break; // uma nota por vez; as demais ficam para o próximo upload
-        }
-        if (!notas.length && erros.length) {
-          alert('Não consegui ler o arquivo: ' + erros[0].mensagem);
+        if (notas.length) {
+          const n = notas[0];
+          await abrir(n, arquivos.find((a) => a.name === n.arquivoNome) || arquivos[0]);
+          if (notas.length > 1) {
+            console.info(`${notas.length - 1} nota(s) restante(s) — importe uma por vez.`);
+          }
+        } else {
+          alert('Não consegui ler o arquivo' +
+                (erros.length ? ': ' + erros[0].mensagem : '.'));
         }
       } catch (e) {
         alert('Não consegui ler o arquivo: ' + e.message);
