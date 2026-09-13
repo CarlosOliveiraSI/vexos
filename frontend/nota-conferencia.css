@@ -433,3 +433,99 @@
 @media (max-width: 860px) {
   .nc-mensagem { margin-left: 14px; margin-right: 14px; }
 }
+
+/* ------------------------------------- cadastro de peça na conferência */
+.nc-cadastro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: #191919;
+  border: 1px solid #333;
+  border-radius: 9px;
+}
+
+.nc-cad-nome {
+  width: 100%;
+  padding: 8px 10px;
+  background: #0d0d0d;
+  border: 1px solid #2b2b2b;
+  border-radius: 7px;
+  color: #e8e8e8;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.nc-cad-valores {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nc-cad-custo { color: #8a8a8a; font-size: 12px; white-space: nowrap; }
+
+.nc-cad-valores label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #9a9a9a;
+  font-size: 12px;
+}
+
+.nc-cad-venda {
+  width: 92px;
+  padding: 7px 8px;
+  background: #0d0d0d;
+  border: 1px solid #2b2b2b;
+  border-radius: 7px;
+  color: #e8e8e8;
+  font-size: 13px;
+  text-align: right;
+  font-family: inherit;
+}
+
+.nc-margens { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.nc-margens button {
+  padding: 5px 10px;
+  background: #1d1d1d;
+  border: 1px solid #2e2e2e;
+  border-radius: 20px;
+  color: #9a9a9a;
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.nc-margens button:hover { background: #262626; color: #e8e8e8; }
+
+.nc-margens button.ativa {
+  background: rgba(255, 122, 24, .14);
+  border-color: rgba(255, 122, 24, .5);
+  color: #ffb27a;
+}
+
+.nc-cad-acoes { display: flex; align-items: center; gap: 12px; }
+
+.nc-btn-mini {
+  padding: 7px 14px;
+  background: #ff7a18;
+  border: 1px solid #ff7a18;
+  border-radius: 7px;
+  color: #1a0e05;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nc-btn-mini:hover { background: #ff8c36; }
+.nc-btn-mini:disabled { opacity: .5; cursor: not-allowed; }
+
+.nc-cad-nome:focus,
+.nc-cad-venda:focus {
+  outline: 2px solid rgba(255, 122, 24, .55);
+  outline-offset: 1px;
+  border-color: transparent;
+}

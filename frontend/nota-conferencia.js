@@ -132,15 +132,25 @@
     return r || [];
   }
 
-  async function criarPeca(item) {
-    return await Banco.criar('pecas', {
+  async function criarPeca(item, dados) {
+    dados = dados || {};
+    const registro = {
       oficina_id: cfg.oficinaId,
-      nome: item.descricao.slice(0, 120),
+      nome: (dados.nome || item.descricao).slice(0, 120),
       codigo: item.codigoFornecedor || null,
       unidade: (item.unidade || 'un').toLowerCase(),
       preco_custo: Number(item.custoUnitario.toFixed(4))
-    });
+    };
+    if (dados.venda > 0) registro.preco_venda = Number(dados.venda.toFixed(2));
+    return await Banco.criar('pecas', registro);
   }
+
+  /* A margem escolhida na primeira peça vale para as seguintes da mesma
+     nota: em nota de fornecedor, quase sempre é o mesmo tipo de produto. */
+  let ultimaMargem = null;
+
+  const precoSugerido = (custo, margem) =>
+    margem ? Math.round(custo * (1 + margem / 100) * 100) / 100 : '';
 
   // ------------------------------------------------------------------
   // Conferência
@@ -166,6 +176,34 @@
   // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
+  /* Cadastro da peça sem sair da conferência: o custo já veio da nota, só
+     falta o preço de venda — pedir isso depois, na tela de estoque, é o
+     caminho mais curto para a peça ficar sem venda para sempre. */
+  function formularioCadastro(item) {
+    const sugerido = precoSugerido(item.custoUnitario, ultimaMargem);
+    return `
+      <div class="nc-cadastro">
+        <input type="text" class="nc-cad-nome" value="${esc(item.descricao)}"
+               placeholder="nome da peça" maxlength="120">
+        <div class="nc-cad-valores">
+          <span class="nc-cad-custo">custo ${moeda(item.custoUnitario)}</span>
+          <label>venda
+            <input type="number" class="nc-cad-venda" step="0.01" min="0"
+                   value="${sugerido}" placeholder="0,00">
+          </label>
+        </div>
+        <div class="nc-margens">
+          ${[30, 50, 80, 100].map((m) =>
+            `<button type="button" data-margem="${m}"
+                     class="${ultimaMargem === m ? 'ativa' : ''}">+${m}%</button>`).join('')}
+        </div>
+        <div class="nc-cad-acoes">
+          <button type="button" class="nc-btn-mini" data-acao="confirmar-cadastro">Cadastrar</button>
+          <button type="button" class="nc-link" data-acao="cancelar-cadastro">cancelar</button>
+        </div>
+      </div>`;
+  }
+
   function linhaItem(item, idx) {
     const rotulo = {
       codigo: 'vinculada pelo código do fornecedor',
@@ -191,10 +229,12 @@
                  <span>${esc(item.peca.nome)}</span>
                  <small>${item.peca.numero ? '#' + esc(item.peca.numero) + ' · ' : ''}${esc(rotulo)}</small>
                </button>`
-            : `<input type="text" class="nc-busca" data-acao="buscar"
-                      placeholder="buscar peça pelo nome, código ou número" autocomplete="off">
-               <div class="nc-sugestoes" hidden></div>
-               <button type="button" class="nc-link" data-acao="criar">cadastrar como peça nova</button>`}
+            : item.cadastrando
+              ? formularioCadastro(item)
+              : `<input type="text" class="nc-busca" data-acao="buscar"
+                        placeholder="buscar peça pelo nome, código ou número" autocomplete="off">
+                 <div class="nc-sugestoes" hidden></div>
+                 <button type="button" class="nc-link" data-acao="criar">cadastrar como peça nova</button>`}
         </td>
         <td class="nc-col-num">
           <input type="number" step="0.0001" min="0.0001" class="nc-inp"
@@ -338,19 +378,62 @@
           estado.itens[idx].vinculo = 'pendente';
           return render();
         case 'criar':
+          estado.itens[idx].cadastrando = true;
+          render();
+          const campo = modal.querySelector(`tr[data-idx="${idx}"] .nc-cad-nome`);
+          if (campo) campo.focus();
+          return;
+
+        case 'cancelar-cadastro':
+          estado.itens[idx].cadastrando = false;
+          return render();
+
+        case 'confirmar-cadastro': {
+          const linha = btn.closest('tr');
+          const nome = (linha.querySelector('.nc-cad-nome').value || '').trim();
+          const venda = parseFloat(linha.querySelector('.nc-cad-venda').value);
+          if (!nome) {
+            avisarModal('Informe o nome da peça.');
+            return;
+          }
+          if (venda > 0 && venda < estado.itens[idx].custoUnitario) {
+            avisarModal('O preço de venda está abaixo do custo desta nota ('
+                        + moeda(estado.itens[idx].custoUnitario)
+                        + '). Corrija ou deixe em branco para preencher depois.');
+            return;
+          }
           btn.disabled = true;
+          btn.textContent = 'Cadastrando…';
           try {
-            estado.itens[idx].peca = await criarPeca(estado.itens[idx]);
+            estado.itens[idx].peca = await criarPeca(estado.itens[idx],
+              { nome: nome, venda: venda > 0 ? venda : 0 });
             estado.itens[idx].vinculo = 'nova';
+            estado.itens[idx].cadastrando = false;
             render();
           } catch (e) {
             avisarModal('Não foi possível cadastrar a peça: ' + e.message);
             btn.disabled = false;
+            btn.textContent = 'Cadastrar';
           }
           return;
+        }
         case 'rascunho': return salvar(false, btn);
         case 'lancar':   return salvar(true, btn);
       }
+    });
+
+    /* Margem: escreve direto no campo, sem redesenhar a tabela — um
+       re-render aqui apagaria o nome que a pessoa acabou de editar. */
+    modal.querySelectorAll('.nc-margens button').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const margem = Number(botao.dataset.margem);
+        const idx = Number(botao.closest('tr').dataset.idx);
+        const campoVenda = botao.closest('.nc-cadastro').querySelector('.nc-cad-venda');
+        ultimaMargem = margem;
+        campoVenda.value = precoSugerido(estado.itens[idx].custoUnitario, margem);
+        botao.parentElement.querySelectorAll('button')
+          .forEach((b) => b.classList.toggle('ativa', b === botao));
+      });
     });
 
     modal.querySelectorAll('.nc-busca').forEach((input) => {
