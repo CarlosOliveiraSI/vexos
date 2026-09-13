@@ -32,7 +32,12 @@
       <h1>Estoque</h1>
       <div class="sub" id="resumo">Peças, saldo e preços.</div>
     </div>
-    <div style="display:flex; gap:10px; flex-wrap:wrap">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div class="busca">
+        <input id="busca" placeholder="Buscar por nome, código, marca..."
+               oninput="desenhar()"
+               onkeydown="if(event.key==='Escape'){this.value='';desenhar();}">
+      </div>
       <a class="btn-linha btn" href="compras.html">Notas de compra</a>
       <button class="btn" onclick="abrirPeca(null)">+ Nova peça</button>
     </div>
@@ -40,17 +45,13 @@
 
   <div class="aviso" id="msg"></div>
 
-  <div class="cartao">
-    <div class="repo-controles" style="margin-bottom:14px">
-      <input type="text" class="busca-input" id="busca"
-             placeholder="Buscar por nome, código, marca ou aplicação..."
-             oninput="desenhar()"
-             onkeydown="if(event.key==='Escape'){this.value='';desenhar();}">
-      <button class="btn-mini" id="btn-filtro" onclick="alternarFiltro()">
-        Só com alerta
-      </button>
-    </div>
-    <div id="lista"><div class="carregando"><span class="spinner"></span> Carregando...</div></div>
+  <div class="filtros">
+    <button class="btn-mini ativo" id="f-todas" onclick="alternarFiltro(false)">Todas</button>
+    <button class="btn-mini" id="f-alerta" onclick="alternarFiltro(true)">Precisam de atenção</button>
+  </div>
+
+  <div class="cartao" style="padding:8px 12px;">
+    <div id="lista"><div class="carregando">Carregando...</div></div>
   </div>
 </div>
 
@@ -90,9 +91,10 @@
     }
   }
 
-  function alternarFiltro() {
-    soAlerta = !soAlerta;
-    document.getElementById("btn-filtro").classList.toggle("ativo", soAlerta);
+  function alternarFiltro(valor) {
+    soAlerta = !!valor;
+    document.getElementById("f-todas").classList.toggle("ativo", !soAlerta);
+    document.getElementById("f-alerta").classList.toggle("ativo", soAlerta);
     desenhar();
   }
 
@@ -120,10 +122,11 @@
 
     if (!itens.length) {
       alvo.innerHTML = !pecas.length
-        ? estadoVazio("Nenhuma peça cadastrada",
-            'Cadastre a primeira em "+ Nova peça", ou lance uma nota de compra.')
-        : estadoVazio("Nada encontrado",
-            soAlerta ? "Nenhuma peça em alerta." : "Nenhuma peça com esse termo.");
+        ? '<div class="vazio">Nenhuma peça cadastrada ainda.<br>'
+          + 'Cadastre a primeira em "+ Nova peça", ou lance uma nota de compra.</div>'
+        : '<div class="vazio">'
+          + (soAlerta ? "Nenhuma peça em alerta."
+                      : "Nada encontrado com esse termo.") + "</div>";
       return;
     }
 
@@ -238,7 +241,7 @@
         <div class="modal-acoes">
           ${novo || !gestor() ? "" :
             '<button class="btn-mini btn-perigo" id="p-inativar">Inativar</button>'}
-          <button class="btn-secundario" id="p-cancelar">Cancelar</button>
+          <button class="btn-linha btn" id="p-cancelar">Cancelar</button>
           <button class="btn" id="p-salvar">${novo ? "Cadastrar" : "Salvar"}</button>
         </div>
       </div>`;
@@ -341,7 +344,7 @@
           <input id="a-motivo" placeholder="Inventário, quebra, devolução...">
         </div>
         <div class="modal-acoes">
-          <button class="btn-secundario" id="a-cancelar">Cancelar</button>
+          <button class="btn-linha btn" id="a-cancelar">Cancelar</button>
           <button class="btn" id="a-salvar">Ajustar</button>
         </div>
       </div>`;
