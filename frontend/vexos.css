@@ -292,6 +292,18 @@ h1{font-size:24px; font-weight:800; letter-spacing:-.3px;}
 .selo.concluida{background:var(--sucesso-fundo); color:var(--sucesso);}
 .selo.cancelada{background:var(--cartao-claro); color:var(--texto-sec);}
 
+/* Estoque: zerado e negativo são coisas diferentes. Zerado é normal, só
+   acabou. Negativo é erro de lançamento — saiu peça que nunca entrou — e
+   por isso pede a cor mais forte da paleta.
+   O texto acompanha a cor de propósito: cerca de 8% dos homens não
+   distinguem bem vermelho de verde, e "sem estoque" escrito funciona
+   para todo mundo. */
+.selo.esgotado{
+  background:var(--cartao-claro); color:var(--texto-sec);
+  border:1px solid var(--borda);
+}
+.selo.negativo{background:var(--erro-fundo); color:var(--erro); font-weight:700;}
+
 .placa{
   font-family:Consolas,monospace; font-weight:700; letter-spacing:1px;
 }

@@ -78,8 +78,11 @@
      específico. */
   function emAlerta(p) {
     const s = Number(p.saldo || 0);
-    return s < 0 || (p.minimo !== null && p.minimo !== undefined
-                     && s <= Number(p.minimo));
+    /* Zero sempre conta, com ou sem mínimo cadastrado: peça sem estoque
+       é peça que você não tem para vender hoje. Antes, quem não
+       preenchia "avisar abaixo de" nunca era avisado de nada. */
+    return s <= 0 || (p.minimo !== null && p.minimo !== undefined
+                      && s <= Number(p.minimo));
   }
 
   async function carregar() {
@@ -101,6 +104,27 @@
   function fmtQtd(n) {
     const v = Number(n || 0);
     return v % 1 === 0 ? String(v) : v.toFixed(3).replace(/0+$/, "");
+  }
+
+  /* Quanto de dinheiro está parado na prateleira.
+
+     A custo, não a preço de venda: é o valor que saiu do caixa e ainda não
+     voltou. O total a preço de venda seria maior e mais animador, mas conta
+     uma receita que só existe se tudo vender.
+
+     Saldo negativo entra como zero. Negativo é peça que saiu sem ter entrado
+     — erro de lançamento a acertar na contagem, não dinheiro a descontar do
+     estoque. */
+  function valorEmEstoque() {
+    let custo = 0, semCusto = 0;
+    pecas.forEach((p) => {
+      const saldo = Math.max(0, Number(p.saldo) || 0);
+      if (!saldo) return;
+      const unit = Number(p.preco_custo);
+      if (!unit) { semCusto++; return; }
+      custo += saldo * unit;
+    });
+    return { custo: custo, semCusto: semCusto };
   }
 
   function desenhar() {
@@ -144,8 +168,13 @@
     if (soAlerta) itens = itens.filter(emAlerta);
 
     const alertas = pecas.filter(emAlerta).length;
+    const capital = valorEmEstoque();
     document.getElementById("resumo").textContent =
       pecas.length + " peça(s) cadastrada(s)"
+      + " · " + dinheiro(capital.custo) + " em estoque"
+      + (capital.semCusto
+          ? " (" + capital.semCusto + " sem custo cadastrado)"
+          : "")
       + (alertas ? " · " + alertas + " precisando de atenção" : "");
 
     if (!itens.length) {
@@ -170,8 +199,14 @@
 
     for (const p of itens) {
       const s = Number(p.saldo || 0);
+      /* Quatro estados, do pior para o melhor:
+         negativo — saiu mais do que entrou, é erro de lançamento
+         zerado   — acabou
+         baixo    — chegou no mínimo que você definiu
+         ok       — tem estoque                                        */
       let selo = "concluida";
-      if (s < 0) selo = "cancelada";
+      if (s < 0) selo = "negativo";
+      else if (s === 0) selo = "esgotado";
       else if (p.minimo !== null && p.minimo !== undefined
                && s <= Number(p.minimo)) selo = "andamento";
 
@@ -183,8 +218,11 @@
           ${sub ? `<div class="sub" style="font-size:12px">${esc(sub)}</div>` : ""}
         </td>
         <td class="esconde-cel" style="color:var(--texto-sec)">${esc(p.codigo || "—")}</td>
-        <td><span class="selo ${selo}"><b>${esc(fmtQtd(p.saldo))}</b>&nbsp;${
-          esc(p.unidade || "un")}</span></td>
+        <td><span class="selo ${selo}">${
+          selo === "esgotado"
+            ? "sem estoque"
+            : `<b>${esc(fmtQtd(p.saldo))}</b>&nbsp;${esc(p.unidade || "un")}`
+        }</span></td>
         <td class="esconde-cel" style="color:var(--texto-sec)">${
           p.preco_custo == null ? "—" : esc(dinheiro(p.preco_custo))}</td>
         <td>${p.preco_venda == null ? "—" : esc(dinheiro(p.preco_venda))}</td>

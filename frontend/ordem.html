@@ -152,13 +152,16 @@
      O CSS de impressão esconde o resto da página e mostra só isto. -->
 <div id="impressao" aria-hidden="true"></div>
 
+<datalist id="lista-pecas"></datalist>
+
 <script src="app.js"></script>
 <script>
   let contexto = null;
   let osId = null;          // nulo enquanto não salva
   let veiculoAtual = null;
   let clienteAtual = null;
-  let itens = [];           // {id?, descricao, quantidade, valor_unit, novo?}
+  let itens = [];           // {id?, descricao, quantidade, valor_unit, peca_id?, novo?}
+  let pecas = [];           // catálogo, para vincular item a estoque
   let itensApagados = [];
 
   (async function () {
@@ -171,6 +174,7 @@
       return;
     }
     document.getElementById("pagina").style.display = "block";
+    carregarPecas();
 
     const params = new URLSearchParams(location.search);
     osId = params.get("id");
@@ -289,10 +293,77 @@
      Itens
      --------------------------------------------------------------- */
   function novoItem() {
-    itens.push({ descricao: "", quantidade: 1, valor_unit: null, novo: true });
+    itens.push({ descricao: "", quantidade: 1, valor_unit: null, peca_id: null, novo: true });
     desenharItens();
     const campos = document.querySelectorAll("#itens .item-desc");
     if (campos.length) campos[campos.length - 1].focus();
+  }
+
+  /* ---------------------------------------------------------------
+     Peças do estoque nas linhas da ordem
+
+     A linha continua livre: mão de obra, deslocamento e serviço de
+     terceiro são texto puro, como sempre foram. Mas se o que a pessoa
+     digitar casar com uma peça do catálogo, a linha passa a apontar
+     para ela — e aí o estoque baixa sozinho quando a ordem é concluída.
+     --------------------------------------------------------------- */
+
+  /* Mesmo formato da tela de compras: quem já digita nota reconhece. */
+  const rotuloPeca = p => `${p.numero} — ${p.nome}`
+    + (p.marca ? ` (${p.marca})` : "");
+
+  async function carregarPecas() {
+    try {
+      pecas = await Banco.listar("pecas", "ativo=is.true&order=numero") || [];
+      document.getElementById("lista-pecas").innerHTML =
+        pecas.map(p => `<option value="${esc(rotuloPeca(p))}"></option>`).join("");
+      /* O catálogo e a ordem carregam em paralelo. Se os itens chegaram
+         primeiro, redesenha para o aviso de saldo aparecer. */
+      if (itens.some(it => it.peca_id)) desenharItens();
+    } catch (e) {
+      pecas = [];   // sem catálogo a tela segue funcionando como antes
+    }
+  }
+
+  const pecaPorRotulo = texto =>
+    pecas.find(p => rotuloPeca(p) === String(texto || "").trim()) || null;
+
+  /* Chamado quando a pessoa escolhe algo do datalist. Preenche o preço
+     de venda cadastrado — digitar de novo um valor que o sistema já sabe
+     é onde nascem os erros de um zero a mais. */
+  function vincularPeca(i, texto) {
+    const p = pecaPorRotulo(texto);
+    if (!p) {
+      if (itens[i].peca_id) { itens[i].peca_id = null; desenharItens(); }
+      return;
+    }
+    itens[i].peca_id = p.id;
+    itens[i].descricao = p.nome + (p.marca ? " — " + p.marca : "");
+    if (itens[i].valor_unit === null || itens[i].valor_unit === "") {
+      if (p.preco_venda) itens[i].valor_unit = Number(p.preco_venda);
+    }
+    desenharItens();
+    atualizarTotal();
+  }
+
+  function saldoDaPeca(pecaId) {
+    const p = pecas.find(x => x.id === pecaId);
+    return p ? Number(p.saldo) || 0 : null;
+  }
+
+  /* Mostra que a linha está ligada ao estoque, e o que vai acontecer com
+     o saldo. Saldo insuficiente não bloqueia — a oficina às vezes usa a
+     peça antes de lançar a nota — mas avisa, porque saldo negativo
+     silencioso vira inventário errado. */
+  function seloPeca(it) {
+    const saldo = saldoDaPeca(it.peca_id);
+    const usar = Number(it.quantidade) || 0;
+    const falta = saldo !== null && usar > saldo;
+    const cor = falta ? "var(--laranja-claro)" : "var(--sucesso)";
+    const texto = falta
+      ? `sai do estoque · saldo ${saldo}, insuficiente`
+      : `sai do estoque${saldo !== null ? " · saldo " + saldo : ""}`;
+    return `<div style="margin-top:4px;font-size:11.5px;color:${cor}">${esc(texto)}</div>`;
   }
 
   function desenharItens() {
@@ -311,9 +382,12 @@
       const tot = (it.valor_unit === null || it.valor_unit === "" )
         ? "" : dinheiro(Number(it.quantidade || 0) * Number(it.valor_unit || 0));
       html += `<tr style="cursor:default">
-        <td><input class="item-desc" data-i="${i}" value="${esc(it.descricao)}"
-             placeholder="Serviço ou peça"
-             style="width:100%;background:var(--fundo);color:var(--texto);border:1px solid var(--borda);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:13.5px"></td>
+        <td>
+          <input class="item-desc" data-i="${i}" value="${esc(it.descricao)}"
+             list="lista-pecas" placeholder="Serviço, ou nº da peça para usar o estoque"
+             style="width:100%;background:var(--fundo);color:var(--texto);border:1px solid var(--borda);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:13.5px">
+          ${it.peca_id ? seloPeca(it) : ""}
+        </td>
         <td><input class="item-qtd" data-i="${i}" type="number" step="0.01" value="${esc(it.quantidade)}"
              style="width:100%;background:var(--fundo);color:var(--texto);border:1px solid var(--borda);border-radius:7px;padding:7px 10px;font-family:inherit;font-size:13.5px"></td>
         <td><input class="item-val" data-i="${i}" type="number" step="0.01"
@@ -326,10 +400,27 @@
     });
     alvo.innerHTML = html + "</tbody></table>";
 
-    alvo.querySelectorAll(".item-desc").forEach(el =>
-      el.addEventListener("input", e => { itens[e.target.dataset.i].descricao = e.target.value; }));
+    alvo.querySelectorAll(".item-desc").forEach(el => {
+      el.addEventListener("input", e => {
+        itens[e.target.dataset.i].descricao = e.target.value;
+      });
+      /* change dispara ao escolher no datalist e ao sair do campo: é o
+         momento certo para resolver o vínculo, sem tentar casar peça a
+         cada tecla digitada. */
+      el.addEventListener("change", e =>
+        vincularPeca(Number(e.target.dataset.i), e.target.value));
+    });
     alvo.querySelectorAll(".item-qtd").forEach(el =>
-      el.addEventListener("input", e => { itens[e.target.dataset.i].quantidade = e.target.value; atualizarTotal(); }));
+      el.addEventListener("input", e => {
+        const i = e.target.dataset.i;
+        itens[i].quantidade = e.target.value;
+        atualizarTotal();
+        if (itens[i].peca_id) {   // o aviso de saldo depende da quantidade
+          const selo = e.target.closest("tr").querySelector(".item-desc")
+                        .parentElement.lastElementChild;
+          if (selo && selo.tagName === "DIV") selo.outerHTML = seloPeca(itens[i]);
+        }
+      }));
     alvo.querySelectorAll(".item-val").forEach(el =>
       el.addEventListener("input", e => {
         const v = e.target.value;
@@ -460,6 +551,7 @@
           quantidade: Number(it.quantidade) || 1,
           valor_unit: it.valor_unit === null || it.valor_unit === ""
                       ? null : Number(it.valor_unit),
+          peca_id: it.peca_id || null,
           ordem: i,
         };
         if (it.id) await Banco.atualizar("os_itens", it.id, dados);

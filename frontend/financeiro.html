@@ -8,7 +8,30 @@
 <link rel="stylesheet" href="vexos.css">
 <style>
   /* específico da aba financeiro — o resto vem do vexos.css */
-  .fin-cards{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:16px;}
+  /* Três colunas, seis lugares: o card de compras ocupa dois porque o
+     texto de apoio dele é o mais longo. Com auto-fit o quinto card
+     sobrava sozinho numa linha. */
+  .fin-cards{display:grid; grid-template-columns:repeat(3,1fr);
+    gap:14px; margin-bottom:16px;}
+  .fin-card.largo{grid-column:span 2;}
+  @media (max-width:1000px){
+    .fin-cards{grid-template-columns:repeat(2,1fr);}
+    .fin-card.largo{grid-column:span 2;}
+  }
+  @media (max-width:640px){
+    .fin-cards{grid-template-columns:1fr;}
+    .fin-card.largo{grid-column:span 1;}
+    .fin-card .val.grande{font-size:34px;}
+  }
+  .fin-card .val.media{font-size:28px;}
+  .fin-card .apoio.neutro{color:var(--texto-sec);}
+  .legenda{display:flex; gap:16px; flex-wrap:wrap; font-size:12px;
+    color:var(--texto-sec); margin-bottom:12px;}
+  .legenda i{display:inline-block; width:10px; height:10px; border-radius:3px;
+    margin-right:6px; vertical-align:-1px;}
+  .fin-barra{position:relative;}
+  .fin-custo{position:absolute; left:0; right:0; bottom:0;
+    background:rgba(0,0,0,.45); border-radius:0 0 6px 6px;}
   .fin-card{background:linear-gradient(160deg,var(--cartao-claro),var(--cartao));
     border:1px solid var(--borda); border-radius:16px; padding:20px 22px;}
   .fin-card .rot{font-size:11px; color:var(--texto-sec); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;}
@@ -76,10 +99,24 @@
         <div class="val" id="val-ticket">—</div>
         <div class="apoio" id="val-ticket-ordens"></div>
       </div>
+      <div class="fin-card">
+        <div class="rot">Margem no mês</div>
+        <div class="val media" id="val-margem">—</div>
+        <div class="apoio" id="val-margem-apoio"></div>
+      </div>
+      <div class="fin-card largo">
+        <div class="rot">Compras no mês</div>
+        <div class="val media" id="val-compras">—</div>
+        <div class="apoio neutro" id="val-compras-apoio"></div>
+      </div>
     </div>
 
     <div class="fin-painel">
       <h2>Faturamento mês a mês</h2>
+      <div class="legenda">
+        <span><i style="background:var(--laranja)"></i>faturado</span>
+        <span><i style="background:var(--texto-sec);opacity:.55"></i>custo das peças</span>
+      </div>
       <div class="fin-barras" id="barras"></div>
     </div>
   </div>
@@ -115,18 +152,74 @@
     }
 
     try {
-      const [mensal, aberto] = await Promise.all([
+      /* margem e estoque são adicionais: se a migration 08 ainda não
+         tiver sido aplicada, a tela continua mostrando o que sempre
+         mostrou em vez de quebrar inteira. */
+      const [mensal, aberto, margem, estoque] = await Promise.all([
         Banco.chamar("financeiro_mensal", { p_meses: 6 }),
         Banco.chamar("financeiro_em_aberto", {}),
+        Banco.chamar("financeiro_margem_mensal", { p_meses: 6 }).catch(() => null),
+        Banco.chamar("estoque_resumo", {}).catch(() => null),
       ]);
-      render(mensal || [], (aberto && aberto[0]) || {em_aberto:0, ordens:0});
+      render(mensal || [], (aberto && aberto[0]) || {em_aberto:0, ordens:0},
+             margem || [], (estoque && estoque[0]) || null);
       document.getElementById("conteudo").style.display = "block";
     } catch(e){
       msg("Não foi possível carregar o financeiro. Tente novamente.");
     }
   })();
 
-  function render(mensal, aberto){
+  /* Margem = o que foi faturado menos o custo das peças que saíram do
+     estoque. Não é lucro: mão de obra, aluguel e imposto não entram.
+     É o que sobra da venda depois de repor a peça. */
+  function preencherMargem(mes, atual){
+    const val = document.getElementById("val-margem");
+    const apoio = document.getElementById("val-margem-apoio");
+    if(!mes){
+      val.textContent = "—";
+      apoio.textContent = "disponível após aplicar a migration de margem";
+      return;
+    }
+    const faturado = Number(mes.faturado) || 0;
+    const custo = Number(mes.custo_pecas) || 0;
+    val.textContent = BRL.format(Number(mes.margem) || 0);
+
+    if(custo <= 0){
+      /* Sem peça vinculada, margem e faturamento são o mesmo número —
+         dizer "100% de margem" seria enganoso. */
+      apoio.textContent = faturado > 0
+        ? "nenhuma peça do estoque usada nas ordens deste mês"
+        : "sem ordens concluídas no mês";
+      apoio.className = "apoio neutro";
+      return;
+    }
+    const pct = faturado > 0 ? (Number(mes.margem) / faturado) * 100 : 0;
+    apoio.textContent = `${pct.toFixed(0)}% do faturado · `
+      + `${BRL.format(custo)} em peças`;
+    apoio.className = "apoio neutro";
+  }
+
+  /* Compras é saída de caixa; estoque é o que dela ainda está parado.
+     Ficam juntos porque um explica o outro. */
+  function preencherCompras(mes, estoque){
+    const val = document.getElementById("val-compras");
+    const apoio = document.getElementById("val-compras-apoio");
+    if(!mes){ val.textContent = "—"; apoio.textContent = ""; return; }
+
+    val.textContent = BRL.format(Number(mes.compras) || 0);
+    const notas = Number(mes.notas) || 0;
+    const partes = [notas + " nota(s) lançada(s)"];
+    if(estoque){
+      partes.push(BRL.format(Number(estoque.valor_custo) || 0) + " parado em estoque");
+      if(Number(estoque.sem_custo) > 0)
+        partes.push(estoque.sem_custo + " peça(s) sem custo");
+      if(Number(estoque.negativos) > 0)
+        partes.push(estoque.negativos + " com saldo negativo");
+    }
+    apoio.textContent = partes.join(" · ");
+  }
+
+  function render(mensal, aberto, margem, estoque){
     // mensal: [{mes, faturado, ordens}] ordenado por mês
     const nMeses = mensal.length;
     const atual = nMeses ? mensal[nMeses-1] : {faturado:0, ordens:0};
@@ -157,12 +250,20 @@
     document.getElementById("val-ticket-ordens").textContent =
       (atual.ordens || 0) + " ordem(ns) concluída(s) no mês";
 
+    // margem e compras do mês
+    const mesAtual = margem.length ? margem[margem.length-1] : null;
+    preencherMargem(mesAtual, atual);
+    preencherCompras(mesAtual, estoque);
+
     // gráfico de barras
     const barras = document.getElementById("barras");
     if(!nMeses){
       barras.outerHTML = '<div class="fin-vazio">Ainda não há ordens concluídas com valor para exibir.</div>';
       return;
     }
+    const custoPorMes = {};
+    (margem || []).forEach(m => { custoPorMes[m.mes] = Number(m.custo_pecas) || 0; });
+
     const max = Math.max(...mensal.map(m => Number(m.faturado) || 0), 1);
     barras.innerHTML = mensal.map((m, i) => {
       const v = Number(m.faturado) || 0;
@@ -171,9 +272,17 @@
       const d = new Date(m.mes + "T00:00:00");
       const lbl = MES_CURTO[d.getMonth()];
       const compacto = v >= 1000 ? "R$ " + (v/1000).toFixed(1).replace(".", ",") + "k" : BRL.format(v);
+      /* A fatia escura dentro da barra é o custo das peças daquele mês:
+         a parte do faturamento que já estava comprometida em repor o
+         estoque. O que fica acima dela é a margem. */
+      const custoMes = custoPorMes[m.mes] || 0;
+      const fatia = v > 0 ? Math.min(100, (custoMes / v) * 100) : 0;
       return `<div class="fin-col">
         <span class="fin-topo-val">${compacto}</span>
-        <div class="fin-barra${ultimo ? "" : " fraca"}" style="height:${alt}%"></div>
+        <div class="fin-barra${ultimo ? "" : " fraca"}" style="height:${alt}%">
+          ${fatia > 0 ? `<div class="fin-custo" style="height:${fatia}%"
+             title="${BRL.format(custoMes)} em peças"></div>` : ""}
+        </div>
         <span class="fin-lbl">${lbl}</span>
       </div>`;
     }).join("");
